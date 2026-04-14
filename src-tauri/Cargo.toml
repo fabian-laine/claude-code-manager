@@ -25,3 +25,10 @@ thiserror = "1"
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"
 libc = "0.2"
+axum = { version = "0.7", features = ["ws", "macros"] }
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors", "trace", "set-header"] }
+futures-util = "0.3"
+rand = "0.8"

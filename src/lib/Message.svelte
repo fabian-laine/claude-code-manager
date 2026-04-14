@@ -31,7 +31,7 @@
   <div class="msg tool-result" class:err={msg.is_error}>
     <button class="result-head" onclick={() => (resultExpanded = !resultExpanded)}>
       <span class="result-label">{msg.is_error ? "error" : "result"}</span>
-      <span class="result-meta">{lines.length} ligne{lines.length > 1 ? "s" : ""}</span>
+      <span class="result-meta">{lines.length} line{lines.length > 1 ? "s" : ""}</span>
       {#if hasMore}
         <span class="chev">{resultExpanded ? "▾" : "▸"}</span>
       {/if}

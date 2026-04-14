@@ -1,173 +1,107 @@
 <script lang="ts">
-  import { open } from "@tauri-apps/plugin-dialog";
   import { store } from "./store.svelte";
+  import { isTauri } from "./api";
+
+  let {
+    onOpenSettings,
+    onProjectSelect,
+  }: {
+    onOpenSettings: () => void;
+    onProjectSelect?: () => void;
+  } = $props();
+
+  function pick(id: string) {
+    store.setActive(id);
+    onProjectSelect?.();
+  }
 
   async function addProject() {
-    const picked = await open({ directory: true, multiple: false });
-    if (!picked || typeof picked !== "string") return;
-    const name = picked.split("/").filter(Boolean).pop() ?? picked;
-    await store.addProject(name, picked);
+    if (isTauri) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const picked = await open({ directory: true, multiple: false });
+      if (!picked || typeof picked !== "string") return;
+      const name = picked.split("/").filter(Boolean).pop() ?? picked;
+      await store.addProject(name, picked);
+    } else {
+      const path = prompt("Absolute path of the project on the PC:");
+      if (!path) return;
+      const name = path.split("/").filter(Boolean).pop() ?? path;
+      await store.addProject(name, path);
+    }
   }
 
   async function removeProject(e: MouseEvent, id: string) {
     e.stopPropagation();
-    if (!confirm("Supprimer ce projet ?")) return;
+    if (!confirm("Delete this project?")) return;
     await store.deleteProject(id);
   }
 </script>
 
-<aside class="sidebar">
-  <header>
-    <h1>Projets</h1>
-    <button class="add-btn" onclick={addProject} title="Ajouter un projet">+</button>
+<aside class="flex flex-col h-full w-full bg-bg-1">
+  <header class="flex items-center justify-between px-4 py-3.5 border-b border-line">
+    <h1 class="text-xs uppercase tracking-widest text-text-2 font-semibold m-0">
+      Projects
+    </h1>
+    <button
+      onclick={addProject}
+      title="Add a project"
+      aria-label="Add a project"
+      class="w-6.5 h-6.5 rounded-md bg-line-2 hover:bg-[#3a3a45] text-text-0 text-lg leading-none cursor-pointer border-none"
+    >
+      +
+    </button>
   </header>
-  <ul>
+
+  <ul class="list-none m-0 p-1.5 flex-1 min-h-0 overflow-y-auto">
     {#each store.projects as p (p.id)}
       {@const st = store.stateFor(p.id)}
       <li
-        class:active={store.activeId === p.id}
-        onclick={() => store.setActive(p.id)}
+        class="group flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer text-text-1 relative overflow-hidden hover:bg-bg-2 {store.activeId ===
+        p.id
+          ? 'bg-[#2b2b36]'
+          : ''}"
+        onclick={() => pick(p.id)}
         role="button"
         tabindex="0"
-        onkeydown={(e) => e.key === "Enter" && store.setActive(p.id)}
+        onkeydown={(e) => e.key === "Enter" && pick(p.id)}
       >
-        <span class="dot" class:busy={st.busy}></span>
-        <div class="meta">
-          <div class="name">{p.name}</div>
-          <div class="path">{p.path}</div>
+        <span
+          class="shrink-0 w-2 h-2 rounded-full {st.busy
+            ? 'bg-warn shadow-[0_0_0_3px_rgba(217,119,6,0.2)] animate-pulse'
+            : 'bg-[#444]'}"
+        ></span>
+        <div class="flex-1 min-w-0 overflow-hidden">
+          <div class="text-[13px] font-medium text-text-0 truncate">
+            {p.name}
+          </div>
+          <div class="text-[11px] text-text-3 truncate">{p.path}</div>
         </div>
-        <button class="del" onclick={(e) => removeProject(e, p.id)} title="Supprimer">×</button>
+        <button
+          onclick={(e) => removeProject(e, p.id)}
+          title="Delete"
+          aria-label="Delete"
+          class="opacity-0 group-hover:opacity-100 bg-transparent border-none text-text-3 hover:text-[#ef4444] text-lg cursor-pointer px-1"
+        >
+          ×
+        </button>
       </li>
     {/each}
     {#if store.projects.length === 0}
-      <li class="empty">Aucun projet. Clique sur + pour ajouter un dossier.</li>
+      <li class="text-text-3 text-[13px] p-4 text-center">
+        No projects yet. Click + to add a folder.
+      </li>
     {/if}
   </ul>
-</aside>
 
-<style>
-  .sidebar {
-    width: 280px;
-    min-width: 280px;
-    background: #141418;
-    border-right: 1px solid #26262d;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 16px;
-    border-bottom: 1px solid #26262d;
-  }
-  h1 {
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #8a8a96;
-    margin: 0;
-  }
-  .add-btn {
-    background: #2a2a33;
-    border: none;
-    color: #e8e8ee;
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 18px;
-    line-height: 1;
-  }
-  .add-btn:hover {
-    background: #3a3a45;
-  }
-  ul {
-    list-style: none;
-    padding: 6px;
-    margin: 0;
-    overflow-y: auto;
-    flex: 1;
-  }
-  li {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    cursor: pointer;
-    color: #c8c8d2;
-    position: relative;
-  }
-  li:hover {
-    background: #1e1e25;
-  }
-  li.active {
-    background: #2b2b36;
-  }
-  li.empty {
-    color: #6a6a75;
-    font-size: 13px;
-    cursor: default;
-    padding: 16px;
-  }
-  li.empty:hover {
-    background: transparent;
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #444;
-    flex-shrink: 0;
-  }
-  .dot.busy {
-    background: #d97706;
-    box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.2);
-    animation: pulse 1.2s infinite;
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.4;
-    }
-  }
-  .meta {
-    flex: 1;
-    min-width: 0;
-  }
-  .name {
-    font-size: 13px;
-    font-weight: 500;
-    color: #e8e8ee;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .path {
-    font-size: 11px;
-    color: #6a6a75;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .del {
-    background: transparent;
-    border: none;
-    color: #6a6a75;
-    font-size: 18px;
-    cursor: pointer;
-    opacity: 0;
-    padding: 0 4px;
-  }
-  li:hover .del {
-    opacity: 1;
-  }
-  .del:hover {
-    color: #ef4444;
-  }
-</style>
+  {#if isTauri}
+    <footer class="border-t border-line p-2">
+      <button
+        onclick={onOpenSettings}
+        title="Settings"
+        class="w-full bg-transparent border border-line text-text-2 hover:bg-bg-2 hover:text-text-0 px-3 py-2 rounded-md cursor-pointer text-[13px] flex items-center gap-2 justify-center"
+      >
+        <span>⚙</span> Settings
+      </button>
+    </footer>
+  {/if}
+</aside>

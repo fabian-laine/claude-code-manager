@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { getApi, type Api } from "./api";
 import type { Project, ClaudeEvent, RenderedMessage } from "./types";
 import { parseClaudeEvent } from "./parseEvent";
 
@@ -14,6 +13,12 @@ function createStore() {
   let projects = $state<Project[]>([]);
   let activeId = $state<string | null>(null);
   const byProject = $state<Record<string, ProjectState>>({});
+  let api: Api | null = null;
+
+  async function ensureApi(): Promise<Api> {
+    if (!api) api = await getApi();
+    return api;
+  }
 
   function ensureState(id: string): ProjectState {
     if (!byProject[id]) {
@@ -23,8 +28,14 @@ function createStore() {
   }
 
   async function refreshProjects() {
-    projects = await invoke<Project[]>("list_projects");
-    for (const p of projects) ensureState(p.id);
+    const a = await ensureApi();
+    projects = await a.listProjects();
+    for (const p of projects) {
+      const st = ensureState(p.id);
+      // Fresh boot: clear any stale running flags left over from a previous run.
+      st.busy = false;
+      st.paused = false;
+    }
     if (!activeId && projects.length > 0) {
       activeId = projects[0].id;
       loadHistory(projects[0].id);
@@ -32,28 +43,29 @@ function createStore() {
   }
 
   async function addProject(name: string, path: string) {
-    const p = await invoke<Project>("add_project", { name, path });
+    const a = await ensureApi();
+    const p = await a.addProject(name, path);
     projects = [p, ...projects];
     ensureState(p.id);
     activeId = p.id;
   }
 
   async function deleteProject(id: string) {
-    await invoke("delete_project", { id });
+    const a = await ensureApi();
+    await a.deleteProject(id);
     projects = projects.filter((p) => p.id !== id);
     delete byProject[id];
     if (activeId === id) activeId = projects[0]?.id ?? null;
   }
 
   async function loadHistory(id: string) {
+    const a = await ensureApi();
     const st = ensureState(id);
     if (st.historyLoaded) return;
     try {
-      const events = await invoke<any[]>("load_history", { projectId: id });
+      const events = await a.loadHistory(id);
       const rendered: RenderedMessage[] = [];
-      for (const ev of events) {
-        rendered.push(...parseClaudeEvent(ev));
-      }
+      for (const ev of events) rendered.push(...parseClaudeEvent(ev));
       st.messages = rendered;
       st.historyLoaded = true;
     } catch (e) {
@@ -64,7 +76,8 @@ function createStore() {
 
   async function cancelMessage(id: string) {
     try {
-      await invoke("cancel_message", { projectId: id });
+      const a = await ensureApi();
+      await a.cancelMessage(id);
     } catch (e) {
       console.error("cancel failed", e);
     }
@@ -72,7 +85,8 @@ function createStore() {
 
   async function pauseMessage(id: string) {
     try {
-      await invoke("pause_message", { projectId: id });
+      const a = await ensureApi();
+      await a.pauseMessage(id);
     } catch (e) {
       console.error("pause failed", e);
     }
@@ -80,17 +94,13 @@ function createStore() {
 
   async function resumeMessage(id: string) {
     try {
-      await invoke("resume_message", { projectId: id });
+      const a = await ensureApi();
+      await a.resumeMessage(id);
     } catch (e) {
       console.error("resume failed", e);
     }
   }
 
-  /**
-   * Resume with additional guidance: kills the currently paused (or running) turn,
-   * then starts a new message using the appended text. Claude picks up via --resume,
-   * so the new text becomes the next user message in the same conversation.
-   */
   async function resumeWithGuidance(id: string, extraText: string) {
     const text = extraText.trim();
     if (!text) {
@@ -98,17 +108,17 @@ function createStore() {
       return;
     }
     try {
-      // Unfreeze then kill so the current turn terminates cleanly.
-      await invoke("cancel_message", { projectId: id });
+      const a = await ensureApi();
+      await a.cancelMessage(id);
     } catch (e) {
       console.error("cancel on inject failed", e);
     }
-    // Give the backend a moment to unregister the old process before spawning the new one.
     await new Promise((r) => setTimeout(r, 150));
     await sendMessage(id, text);
   }
 
   async function sendMessage(id: string, prompt: string) {
+    const a = await ensureApi();
     const st = ensureState(id);
     st.messages.push({
       type: "user",
@@ -117,7 +127,7 @@ function createStore() {
     });
     st.busy = true;
     try {
-      await invoke("send_message", { projectId: id, prompt });
+      await a.sendMessage(id, prompt);
     } catch (e) {
       st.messages.push({
         type: "error",
@@ -142,7 +152,7 @@ function createStore() {
     } else if (ev.kind === "cancelled") {
       st.messages.push({
         type: "error",
-        text: "Interrompu par l'utilisateur.",
+        text: "Interrupted by user.",
         id: `c-${Date.now()}`,
       });
     } else if (ev.kind === "error") {
@@ -154,7 +164,6 @@ function createStore() {
     } else if (ev.kind === "raw") {
       const rendered = parseClaudeEvent(ev.event);
       for (const m of rendered) {
-        // Dedup: result event sometimes repeats the last assistant text verbatim.
         if (m.type === "assistant_text") {
           const last = st.messages[st.messages.length - 1];
           if (last && last.type === "assistant_text" && last.text === m.text) {
@@ -167,7 +176,8 @@ function createStore() {
   }
 
   async function initListener() {
-    await listen<ClaudeEvent>("claude-event", (e) => handleEvent(e.payload));
+    const a = await ensureApi();
+    await a.subscribe(handleEvent);
   }
 
   function setActive(id: string) {
@@ -196,6 +206,7 @@ function createStore() {
     resumeWithGuidance,
     setActive,
     initListener,
+    ensureApi,
   };
 }
 

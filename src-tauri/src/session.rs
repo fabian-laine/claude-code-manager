@@ -5,13 +5,16 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
-/// Registry of currently running `claude` processes, keyed by project id.
-/// Lets us cancel an in-flight run from a separate Tauri command.
+pub type EventBus = broadcast::Sender<ClaudeEvent>;
+
+pub fn new_event_bus() -> EventBus {
+    broadcast::channel(512).0
+}
+
 #[derive(Default)]
 pub struct ProcessRegistry {
     map: Mutex<HashMap<String, Arc<Mutex<Child>>>>,
@@ -27,8 +30,6 @@ impl ProcessRegistry {
     }
 
     pub async fn cancel(&self, project_id: &str) -> Result<bool> {
-        // Make sure the process is running before killing (SIGKILL still works on
-        // a stopped process but it's cleaner to resume it first).
         let _ = self.resume(project_id).await;
         let entry = self.map.lock().await.get(project_id).cloned();
         if let Some(child_arc) = entry {
@@ -63,8 +64,6 @@ impl ProcessRegistry {
     }
 }
 
-/// Signal the process and all of its descendants. `claude` spawns node
-/// subprocesses, and SIGSTOP on just the parent won't freeze in-flight work.
 fn send_signal_tree(root_pid: i32, signal: libc::c_int) {
     let mut stack = vec![root_pid];
     let mut all = Vec::new();
@@ -74,7 +73,6 @@ fn send_signal_tree(root_pid: i32, signal: libc::c_int) {
             stack.push(child);
         }
     }
-    // Signal deepest first so parents can't spawn new children we'd miss.
     for pid in all.iter().rev() {
         unsafe { libc::kill(*pid, signal) };
     }
@@ -104,8 +102,12 @@ pub enum ClaudeEvent {
     Resumed { project_id: String },
 }
 
+fn send(bus: &EventBus, ev: ClaudeEvent) {
+    let _ = bus.send(ev);
+}
+
 pub async fn run_claude(
-    app: AppHandle,
+    bus: EventBus,
     registry: Arc<ProcessRegistry>,
     project_id: String,
     project_path: String,
@@ -116,8 +118,8 @@ pub async fn run_claude(
         return Err(anyhow!("Project path does not exist: {}", project_path));
     }
 
-    let _ = app.emit(
-        "claude-event",
+    send(
+        &bus,
         ClaudeEvent::Started {
             project_id: project_id.clone(),
         },
@@ -140,27 +142,31 @@ pub async fn run_claude(
         cmd.arg("--resume").arg(sid);
     }
 
-    let mut child = cmd.spawn().map_err(|e| anyhow!("failed to spawn claude: {}", e))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| anyhow!("failed to spawn claude: {}", e))?;
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr"))?;
 
     let child_arc = Arc::new(Mutex::new(child));
     registry.register(project_id.clone(), child_arc.clone()).await;
 
-    let app_err = app.clone();
-    let pid_err = project_id.clone();
-    tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            let _ = app_err.emit(
-                "claude-event",
-                ClaudeEvent::Error {
-                    project_id: pid_err.clone(),
-                    message: line,
-                },
-            );
-        }
-    });
+    {
+        let bus = bus.clone();
+        let pid_err = project_id.clone();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                send(
+                    &bus,
+                    ClaudeEvent::Error {
+                        project_id: pid_err.clone(),
+                        message: line,
+                    },
+                );
+            }
+        });
+    }
 
     let mut reader = BufReader::new(stdout).lines();
     let mut final_session_id: Option<String> = None;
@@ -177,8 +183,8 @@ pub async fn run_claude(
                         if let Some(sid) = val.get("session_id").and_then(|v| v.as_str()) {
                             final_session_id = Some(sid.to_string());
                         }
-                        let _ = app.emit(
-                            "claude-event",
+                        send(
+                            &bus,
                             ClaudeEvent::Raw {
                                 project_id: project_id.clone(),
                                 event: val,
@@ -186,8 +192,8 @@ pub async fn run_claude(
                         );
                     }
                     Err(e) => {
-                        let _ = app.emit(
-                            "claude-event",
+                        send(
+                            &bus,
                             ClaudeEvent::Error {
                                 project_id: project_id.clone(),
                                 message: format!("parse error: {} (line: {})", e, line),
@@ -198,10 +204,9 @@ pub async fn run_claude(
             }
             Ok(None) => break,
             Err(e) => {
-                // stdout closed unexpectedly (likely due to kill)
                 cancelled = true;
-                let _ = app.emit(
-                    "claude-event",
+                send(
+                    &bus,
                     ClaudeEvent::Error {
                         project_id: project_id.clone(),
                         message: format!("stream error: {}", e),
@@ -219,7 +224,6 @@ pub async fn run_claude(
     registry.unregister(&project_id).await;
 
     if !status.success() && !cancelled {
-        // If the process was killed via signal, treat as cancelled rather than error.
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt;
@@ -228,8 +232,8 @@ pub async fn run_claude(
             }
         }
         if !cancelled {
-            let _ = app.emit(
-                "claude-event",
+            send(
+                &bus,
                 ClaudeEvent::Error {
                     project_id: project_id.clone(),
                     message: format!("claude exited with status: {}", status),
@@ -239,16 +243,16 @@ pub async fn run_claude(
     }
 
     if cancelled {
-        let _ = app.emit(
-            "claude-event",
+        send(
+            &bus,
             ClaudeEvent::Cancelled {
                 project_id: project_id.clone(),
             },
         );
     }
 
-    let _ = app.emit(
-        "claude-event",
+    send(
+        &bus,
         ClaudeEvent::Finished {
             project_id: project_id.clone(),
             session_id: final_session_id.clone(),

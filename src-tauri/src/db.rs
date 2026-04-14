@@ -30,6 +30,10 @@ impl Db {
                 path TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 last_session_id TEXT
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );",
         )?;
         Ok(Self { conn: Mutex::new(conn) })
@@ -103,6 +107,26 @@ impl Db {
         conn.execute(
             "UPDATE projects SET last_session_id = ?1 WHERE id = ?2",
             params![session_id, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut rows = stmt.query(params![key])?;
+        if let Some(r) = rows.next()? {
+            Ok(Some(r.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
         )?;
         Ok(())
     }

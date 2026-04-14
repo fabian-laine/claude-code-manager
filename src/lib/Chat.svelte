@@ -24,8 +24,24 @@
     }
   }
 
+  function resume() {
+    if (!store.activeId) return;
+    const text = input;
+    input = "";
+    store.resumeWithGuidance(store.activeId, text);
+  }
+
+  function pause() {
+    if (!store.activeId) return;
+    store.pauseMessage(store.activeId);
+  }
+
+  function abort() {
+    if (!store.activeId) return;
+    store.cancelMessage(store.activeId);
+  }
+
   $effect(() => {
-    // auto-scroll when messages grow
     const _ = st?.messages.length;
     if (scrollEl) {
       queueMicrotask(() => {
@@ -35,201 +51,94 @@
   });
 </script>
 
-<section class="chat">
+<section class="flex-1 flex flex-col bg-bg-0 min-w-0 min-h-0">
   {#if !active}
-    <div class="empty-state">
-      <p>Sélectionne ou ajoute un projet pour commencer.</p>
+    <div class="flex-1 flex items-center justify-center text-text-3 text-[13px]">
+      <p>Select or add a project to get started.</p>
     </div>
   {:else}
-    <header>
-      <div class="title">{active.name}</div>
-      <div class="subtitle">{active.path}</div>
-      {#if st?.busy}
-        <div class="status">Claude travaille…</div>
-      {/if}
-    </header>
-    <div class="scroll" bind:this={scrollEl}>
+    <div class="flex-1 overflow-y-auto px-6 py-4" bind:this={scrollEl}>
       {#if st && st.messages.length === 0}
-        <div class="empty-state">Envoie ton premier message à Claude.</div>
+        <div class="text-text-3 text-[13px] text-center py-10">
+          Send your first message to Claude.
+        </div>
       {/if}
       {#each st?.messages ?? [] as m (m.id)}
         <Message msg={m} />
       {/each}
     </div>
-    <footer>
+
+    <div class="shrink-0 p-4 border-t border-line bg-bg-1">
       {#if st?.paused}
-        <textarea
-          placeholder="Ajoute des consignes pour Claude (optionnel), puis Reprendre…"
-          bind:value={input}
-          rows="3"
-        ></textarea>
-        <div class="col">
+        <div
+          class="relative bg-bg-2 border border-line-2 rounded-xl focus-within:border-info transition-colors"
+        >
+          <textarea
+            placeholder="Add extra instructions for Claude (optional), then Resume…"
+            bind:value={input}
+            rows="2"
+            class="w-full bg-transparent border-none text-text-0 text-sm leading-relaxed resize-none outline-none pl-3.5 pr-14 py-3 min-h-[46px] max-h-[200px] font-sans"
+          ></textarea>
           <button
-            class="resume"
-            onclick={() => {
-              if (!store.activeId) return;
-              const text = input;
-              input = "";
-              store.resumeWithGuidance(store.activeId, text);
-            }}
-            title={input.trim() ? "Reprendre avec ces consignes" : "Reprendre"}
+            onclick={resume}
+            title={input.trim() ? "Resume with these instructions" : "Resume"}
+            aria-label="Resume"
+            class="absolute right-2 bottom-2 w-9 h-9 rounded-[10px] border-none cursor-pointer inline-flex items-center justify-center bg-ok hover:brightness-110 text-bg-1"
           >
-            ▶ {input.trim() ? "Reprendre avec consignes" : "Reprendre"}
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
           </button>
-          <button
-            class="ghost"
-            onclick={() => store.activeId && store.cancelMessage(store.activeId)}
-            title="Abandonner cette requête"
-          >
-            Abandonner
-          </button>
-        </div>
-      {:else if st?.busy}
-        <div class="running">
-          <span>Claude travaille…</span>
         </div>
         <button
-          class="pause"
-          onclick={() => store.activeId && store.pauseMessage(store.activeId)}
-          title="Mettre Claude en pause"
+          onclick={abort}
+          class="block mx-auto mt-2 bg-transparent border-none text-text-2 hover:text-[#f87171] hover:underline text-xs cursor-pointer py-1 px-2"
         >
-          ⏸ Pause
+          Abort request
         </button>
       {:else}
-        <textarea
-          placeholder="Message à Claude… (Entrée pour envoyer, Shift+Entrée pour nouvelle ligne)"
-          bind:value={input}
-          onkeydown={onKey}
-          rows="3"
-        ></textarea>
-        <button onclick={send} disabled={!input.trim()}>Envoyer</button>
+        <div
+          class="relative bg-bg-2 border {st?.busy
+            ? 'border-[#3a2e20]'
+            : 'border-line-2 focus-within:border-info'} rounded-xl transition-colors"
+        >
+          <textarea
+            placeholder={st?.busy
+              ? "Claude is working…"
+              : "Message Claude… (Enter to send, Shift+Enter for new line)"}
+            bind:value={input}
+            onkeydown={onKey}
+            disabled={st?.busy}
+            rows="2"
+            class="w-full bg-transparent border-none text-text-0 disabled:text-text-2 text-sm leading-relaxed resize-none outline-none pl-3.5 pr-14 py-3 min-h-[46px] max-h-[200px] font-sans"
+          ></textarea>
+          {#if st?.busy}
+            <button
+              onclick={pause}
+              title="Pause Claude"
+              aria-label="Pause"
+              class="absolute right-2 bottom-2 w-9 h-9 rounded-[10px] border-none cursor-pointer inline-flex items-center justify-center bg-warn hover:brightness-110 text-bg-1"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <rect x="6" y="5" width="4" height="14" rx="1" />
+                <rect x="14" y="5" width="4" height="14" rx="1" />
+              </svg>
+            </button>
+          {:else}
+            <button
+              onclick={send}
+              disabled={!input.trim()}
+              title="Send"
+              aria-label="Send"
+              class="absolute right-2 bottom-2 w-9 h-9 rounded-[10px] border-none cursor-pointer inline-flex items-center justify-center bg-accent hover:bg-accent-2 text-bg-1 disabled:bg-line-2 disabled:text-text-3 disabled:cursor-not-allowed"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M2 21l21-9L2 3v7l15 2-15 2z" />
+              </svg>
+            </button>
+          {/if}
+        </div>
       {/if}
-    </footer>
+    </div>
   {/if}
 </section>
-
-<style>
-  .chat {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    background: #0e0e12;
-    min-width: 0;
-  }
-  header {
-    padding: 14px 20px;
-    border-bottom: 1px solid #26262d;
-    background: #14141a;
-  }
-  .title {
-    font-size: 14px;
-    font-weight: 600;
-    color: #e8e8ee;
-  }
-  .subtitle {
-    font-size: 11px;
-    color: #6a6a75;
-    margin-top: 2px;
-  }
-  .status {
-    font-size: 11px;
-    color: #d97706;
-    margin-top: 4px;
-  }
-  .scroll {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 24px;
-  }
-  .empty-state {
-    color: #6a6a75;
-    text-align: center;
-    padding: 40px 20px;
-    font-size: 13px;
-  }
-  footer {
-    padding: 14px 20px;
-    border-top: 1px solid #26262d;
-    background: #14141a;
-    display: flex;
-    gap: 10px;
-    align-items: flex-end;
-  }
-  textarea {
-    flex: 1;
-    background: #1a1a22;
-    border: 1px solid #2a2a33;
-    border-radius: 8px;
-    padding: 10px 12px;
-    color: #e8e8ee;
-    font-family: inherit;
-    font-size: 14px;
-    resize: none;
-    outline: none;
-  }
-  textarea:focus {
-    border-color: #4a6a9a;
-  }
-  textarea:disabled {
-    opacity: 0.5;
-  }
-  button {
-    background: #c9a96e;
-    color: #14141a;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 18px;
-    font-weight: 600;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  button:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-  button:hover:not(:disabled) {
-    background: #d9b97e;
-  }
-  button.pause {
-    background: #d97706;
-    color: #14141a;
-  }
-  button.pause:hover {
-    background: #eb8a14;
-  }
-  button.resume {
-    background: #7aa870;
-    color: #14141a;
-  }
-  button.resume:hover {
-    background: #8cbd80;
-  }
-  button.ghost {
-    background: transparent;
-    color: #9a9aa5;
-    border: 1px solid #3a3a45;
-    font-weight: 500;
-  }
-  button.ghost:hover {
-    background: #1e1e25;
-    color: #e8e8ee;
-  }
-  .col {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .running {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    padding: 0 14px;
-    color: #d97706;
-    font-size: 13px;
-    background: #1a1a22;
-    border: 1px solid #2a2a33;
-    border-radius: 8px;
-    height: 64px;
-  }
-</style>

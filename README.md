@@ -21,6 +21,7 @@ Under the hood, the app spawns real `claude` processes with `--output-format str
 - **Full Markdown** in assistant responses (GFM tables, code blocks with highlight.js, headings, lists, quotes, links).
 - **Pause with added guidance** — mid-turn, freeze the entire Claude process tree with `SIGSTOP`, optionally type extra instructions, then resume (either continue as-is with `SIGCONT`, or abort the current turn and inject your new message into the same conversation via `--resume`).
 - **Right panel** — collapsible panel showing configured MCP servers (live from `claude mcp list`), quick actions (open project folder, copy session id), and project metadata.
+- **Remote access from your phone** — toggleable HTTP/WebSocket server that serves the same UI over your network. Combine with [Tailscale](https://tailscale.com) for secure access from anywhere without exposing ports.
 - **Skip permissions by default** — runs Claude with `--dangerously-skip-permissions` so you never get blocked by prompts.
 - **Native dark theme** built for long coding sessions.
 
@@ -99,6 +100,75 @@ Artifacts land in `src-tauri/target/release/bundle/`. First build takes ~5 minut
 pnpm tauri dev
 ```
 
+## Remote access (use from your phone)
+
+Claude Code Manager can serve its own UI over HTTPS so you can drive Claude from a phone, tablet, or another computer while your main PC keeps running the actual sessions. The transport is end-to-end encrypted, token-protected, and works from anywhere on the internet via Tailscale without exposing any port to the public.
+
+> **Note:** your PC must stay on and the app running — the laptop does all the work; the phone is just a remote UI.
+
+### 1. One-time Tailscale setup on the PC
+
+[Tailscale](https://tailscale.com) creates a free, private network between your devices. Nothing is published to the public internet.
+
+```bash
+# Fedora — use apt/pacman on other distros
+sudo dnf install tailscale
+sudo systemctl enable --now tailscaled
+sudo tailscale up
+
+# Allow cert generation without root so the app can manage certificates
+sudo tailscale set --operator=$USER
+```
+
+Then enable HTTPS certificates in the Tailscale admin: [login.tailscale.com/admin/dns](https://login.tailscale.com/admin/dns) → **HTTPS Certificates** → Enable. This lets Tailscale issue real Let's Encrypt certs for your `*.ts.net` hostname.
+
+### 2. Open Settings in the desktop app
+
+Click **⚙ Settings** in the sidebar footer. The **Remote access** section shows a 5-step checklist that checks each prerequisite live:
+
+1. ✓ Tailscale installed (auto-detected)
+2. ✓ Cert generation allowed without sudo
+3. ✓ HTTPS enabled in admin console
+4. **Generate the TLS certificate** — click the button. The app runs `tailscale cert` and saves the files to its data directory.
+5. **Start the server** — pick a port (default 17890) and click Start.
+
+Once started, the URL section shows your Tailscale HTTPS address (e.g. `https://fedora.tailXXXX.ts.net:17890`) and the access token. **Copy both** — you'll paste them on your phone.
+
+### 3. Install Tailscale on your phone
+
+- **iPhone** — App Store → "Tailscale" → sign in with the same account.
+- **Android** — Play Store → "Tailscale" → sign in with the same account.
+
+Turn on the VPN toggle. Your phone is now on the same private network as your PC, even over cellular.
+
+### 4. Open the URL in your mobile browser
+
+Paste the `https://fedora.tailXXXX.ts.net:17890` URL in Safari (iOS) or Chrome (Android). You'll see the access token screen — paste the token, tap **Sign in**, and you're in.
+
+### 5. (Optional) Add to home screen
+
+Get an app-like icon on your phone:
+
+- **iOS / Safari** — Share button → "Add to Home Screen".
+- **Android / Chrome** — menu ⋮ → "Add to Home screen".
+
+Tapping the icon opens Claude Code Manager in standalone mode, with its own icon and splash screen. You can now send messages to Claude from anywhere.
+
+### Security notes
+
+- The server binds to `0.0.0.0` but Tailscale ACLs and its VPN mean only devices on your tailnet can reach it. Every API call still requires a bearer token.
+- You can **rotate the token** at any time from Settings — this invalidates all existing sessions on remote devices.
+- All traffic between phone and PC is TLS 1.3 via Tailscale's own Let's Encrypt certificates.
+- No port forwarding, no public DNS, no exposed service. If you pause Tailscale on either end, the URL becomes unreachable — by design.
+
+### Troubleshooting
+
+**Browser shows `ERR_SSL_PROTOCOL_ERROR`** — you typed `http://` on a `*.ts.net` domain. Browsers force HTTPS on Tailscale domains via HSTS preload. Make sure you enabled HTTPS in the app Settings and generated the cert before starting the server.
+
+**"tailscale cert: access denied"** — you forgot `sudo tailscale set --operator=$USER`. Run that once, then click Generate again in Settings.
+
+**"Connection refused" on mobile** — check Tailscale is connected on the phone (the app should show "Connected"). Also verify the desktop app is still running and the server is enabled in Settings.
+
 ## Troubleshooting
 
 **The app crashes on launch with a Wayland protocol error.** This is a known webkit2gtk issue on recent Fedora/GNOME. The installed `.desktop` file already sets the workaround env vars, but if you launch the binary directly:
@@ -128,6 +198,7 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 claude-code-m
 
 ## Roadmap
 
+- [x] Remote access (HTTP/WS server + mobile UI)
 - [ ] Per-project system prompt / model override
 - [ ] Slash command palette
 - [ ] Search across past sessions
