@@ -15,6 +15,12 @@
     onProjectSelect?.();
   }
 
+  const sortedProjects = $derived(
+    [...store.projects].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    ),
+  );
+
   async function addProject() {
     if (isTauri) {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -53,7 +59,7 @@
   </header>
 
   <ul class="list-none m-0 p-1.5 flex-1 min-h-0 overflow-y-auto">
-    {#each store.projects as p (p.id)}
+    {#each sortedProjects as p (p.id)}
       {@const st = store.stateFor(p.id)}
       <li
         class="group flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer text-text-1 relative overflow-hidden hover:bg-bg-2 {store.activeId ===
