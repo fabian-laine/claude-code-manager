@@ -1,29 +1,65 @@
 <script lang="ts">
   import { marked } from "marked";
   import hljs from "highlight.js";
+  import mermaid from "mermaid";
 
   let { source }: { source: string } = $props();
+
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "dark",
+    securityLevel: "loose",
+    fontFamily: "inherit",
+    themeVariables: {
+      darkMode: true,
+      background: "#0e0e12",
+      primaryColor: "#1a1a22",
+      primaryTextColor: "#e8e8ee",
+      primaryBorderColor: "#3a3a45",
+      lineColor: "#6a6a75",
+      secondaryColor: "#26262d",
+      tertiaryColor: "#14141a",
+    },
+  });
+
+  let mermaidCounter = 0;
 
   marked.setOptions({
     gfm: true,
     breaks: true,
   });
 
+  function looksLikeMermaid(text: string): boolean {
+    const first = text.trimStart().split("\n", 1)[0] ?? "";
+    return /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|quadrantChart|requirementDiagram|gitGraph|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|xychart-beta|sankey-beta|block-beta|packet-beta|architecture-beta)\b/i.test(
+      first,
+    );
+  }
+
   // @ts-ignore — marked v12+ extension API
   marked.use({
     renderer: {
       code({ text, lang }: { text: string; lang?: string }) {
-        const language = lang && hljs.getLanguage(lang) ? lang : "plaintext";
+        const isMermaid = lang === "mermaid" || (!lang && looksLikeMermaid(text));
+        const language = isMermaid
+          ? "mermaid"
+          : lang && hljs.getLanguage(lang)
+            ? lang
+            : "plaintext";
         let highlighted: string;
-        try {
-          highlighted = hljs.highlight(text, { language, ignoreIllegals: true }).value;
-        } catch {
+        if (isMermaid) {
+          // Mermaid isn't in hljs; render the source plain.
           highlighted = escapeHtml(text);
+        } else {
+          try {
+            highlighted = hljs.highlight(text, { language, ignoreIllegals: true }).value;
+          } catch {
+            highlighted = escapeHtml(text);
+          }
         }
-        // Stash the raw (un-highlighted) text on the pre element so the copy
-        // button can grab it back without bringing the hljs spans along.
         const raw = escapeHtml(text);
-        return `<pre class="hljs" data-code="${raw}"><code class="language-${language}">${highlighted}</code></pre>`;
+        const mermaidAttr = isMermaid ? ' data-mermaid="true"' : "";
+        return `<pre class="hljs" data-code="${raw}"${mermaidAttr}><code class="language-${language}">${highlighted}</code></pre>`;
       },
     },
   });
@@ -41,6 +77,29 @@
 
   let container: HTMLDivElement | undefined = $state();
 
+  async function renderMermaid(pre: HTMLPreElement) {
+    if (pre.previousElementSibling?.classList.contains("mermaid-diagram")) return;
+    const raw = pre.getAttribute("data-code") ?? "";
+    const source = raw
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+    const wrapper = document.createElement("div");
+    wrapper.className = "mermaid-diagram";
+    wrapper.textContent = "Rendering diagram…";
+    pre.parentNode?.insertBefore(wrapper, pre);
+    try {
+      const id = `mermaid-${++mermaidCounter}-${Date.now()}`;
+      const { svg } = await mermaid.render(id, source);
+      wrapper.innerHTML = svg;
+    } catch (e) {
+      wrapper.className = "mermaid-diagram mermaid-error";
+      wrapper.textContent = `Mermaid error: ${(e as Error).message ?? String(e)}`;
+    }
+  }
+
   $effect(() => {
     // Re-run when the rendered HTML changes.
     const _ = html;
@@ -49,6 +108,9 @@
       if (!container) return;
       const pres = container.querySelectorAll<HTMLPreElement>("pre.hljs");
       pres.forEach((pre) => {
+        if (pre.hasAttribute("data-mermaid")) {
+          renderMermaid(pre);
+        }
         if (pre.querySelector(".copy-btn")) return;
         pre.style.position = "relative";
         const btn = document.createElement("button");
@@ -178,6 +240,28 @@
   .md :global(pre .copy-btn.copied) {
     color: #7aa870;
     opacity: 1;
+  }
+  .md :global(.mermaid-diagram) {
+    background: #0b0b10;
+    border: 1px solid #26262d;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 0.7em 0;
+    overflow-x: auto;
+    text-align: center;
+    color: #9a9aa5;
+    font-size: 12px;
+  }
+  .md :global(.mermaid-diagram svg) {
+    max-width: 100%;
+    height: auto;
+  }
+  .md :global(.mermaid-diagram.mermaid-error) {
+    color: #f87171;
+    border-color: #5a2a2a;
+    background: #1a1010;
+    text-align: left;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
   }
   .md :global(pre code) {
     background: transparent;

@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-manager"
-version = "0.1.0"
+version = "0.2.0"
 description = "Claude Code Manager"
 authors = ["e-xiste"]
 edition = "2021"
