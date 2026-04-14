@@ -20,7 +20,10 @@
         } catch {
           highlighted = escapeHtml(text);
         }
-        return `<pre class="hljs"><code class="language-${language}">${highlighted}</code></pre>`;
+        // Stash the raw (un-highlighted) text on the pre element so the copy
+        // button can grab it back without bringing the hljs spans along.
+        const raw = escapeHtml(text);
+        return `<pre class="hljs" data-code="${raw}"><code class="language-${language}">${highlighted}</code></pre>`;
       },
     },
   });
@@ -35,9 +38,57 @@
   }
 
   const html = $derived(marked.parse(source) as string);
+
+  let container: HTMLDivElement | undefined = $state();
+
+  $effect(() => {
+    // Re-run when the rendered HTML changes.
+    const _ = html;
+    if (!container) return;
+    queueMicrotask(() => {
+      if (!container) return;
+      const pres = container.querySelectorAll<HTMLPreElement>("pre.hljs");
+      pres.forEach((pre) => {
+        if (pre.querySelector(".copy-btn")) return;
+        pre.style.position = "relative";
+        const btn = document.createElement("button");
+        btn.className = "copy-btn";
+        btn.type = "button";
+        btn.title = "Copy";
+        btn.setAttribute("aria-label", "Copy code");
+        btn.innerHTML =
+          '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const raw = pre.getAttribute("data-code") ?? "";
+          // Un-escape the HTML entities we stored.
+          const txt = raw
+            .replace(/&amp;/g, "&")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'");
+          try {
+            await navigator.clipboard.writeText(txt);
+            btn.classList.add("copied");
+            btn.innerHTML =
+              '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>';
+            setTimeout(() => {
+              btn.classList.remove("copied");
+              btn.innerHTML =
+                '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+            }, 1500);
+          } catch (err) {
+            console.error("copy failed", err);
+          }
+        });
+        pre.appendChild(btn);
+      });
+    });
+  });
 </script>
 
-<div class="md">{@html html}</div>
+<div class="md" bind:this={container}>{@html html}</div>
 
 <style>
   .md {
@@ -98,6 +149,35 @@
     padding: 12px 14px;
     overflow-x: auto;
     margin: 0.7em 0;
+  }
+  .md :global(pre .copy-btn) {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #1a1a22;
+    border: 1px solid #2a2a33;
+    border-radius: 6px;
+    color: #9a9aa5;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    padding: 0;
+  }
+  .md :global(pre:hover .copy-btn) {
+    opacity: 1;
+  }
+  .md :global(pre .copy-btn:hover) {
+    background: #24242e;
+    color: #e8e8ee;
+  }
+  .md :global(pre .copy-btn.copied) {
+    color: #7aa870;
+    opacity: 1;
   }
   .md :global(pre code) {
     background: transparent;
