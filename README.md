@@ -200,10 +200,7 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 claude-code-m
 ## Roadmap
 
 - [x] Remote access (HTTP/WS server + mobile UI)
-- [ ] Per-project system prompt / model override
 - [ ] Slash command palette
-- [ ] Search across past sessions
-- [ ] Windows / macOS builds
 - [ ] Arch AUR package
 
 ## License
