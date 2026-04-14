@@ -19,6 +19,7 @@ Under the hood, the app spawns real `claude` processes with `--output-format str
 - **Session resume** — sessions are persisted by Claude Code itself (`~/.claude/projects/*.jsonl`), so closing the app or restarting it never loses context. The next message automatically uses `--resume`.
 - **CLI-style rendering** — tool calls (Read, Edit, Write, Bash, Grep, Glob, TodoWrite, Task, WebFetch…) are rendered with icons, collapsible details, real diff view for `Edit`, todo checklists, and syntax-highlighted code blocks.
 - **Full Markdown** in assistant responses (GFM tables, code blocks with highlight.js, headings, lists, quotes, links).
+- **Mermaid diagrams** — code blocks tagged `mermaid` (or auto-detected) are rendered as interactive diagrams directly in the chat, with dark theme support.
 - **Pause with added guidance** — mid-turn, freeze the entire Claude process tree with `SIGSTOP`, optionally type extra instructions, then resume (either continue as-is with `SIGCONT`, or abort the current turn and inject your new message into the same conversation via `--resume`).
 - **Right panel** — collapsible panel showing configured MCP servers (live from `claude mcp list`), quick actions (open project folder, copy session id), and project metadata.
 - **Remote access from your phone** — toggleable HTTP/WebSocket server that serves the same UI over your network. Combine with [Tailscale](https://tailscale.com) for secure access from anywhere without exposing ports.
