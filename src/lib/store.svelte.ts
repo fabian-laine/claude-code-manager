@@ -48,6 +48,7 @@ function createStore() {
     projects = [p, ...projects];
     ensureState(p.id);
     activeId = p.id;
+    loadHistory(p.id);
   }
 
   async function deleteProject(id: string) {
