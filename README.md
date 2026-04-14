@@ -30,9 +30,12 @@ Under the hood, the app spawns real `claude` processes with `--output-format str
 
 ## Requirements
 
-- **Linux** (Fedora, Ubuntu, Debian, Arch, openSUSE…)
-- **[Claude Code CLI](https://docs.claude.com/en/docs/claude-code/quickstart)** installed and authenticated (`claude` must be in your `PATH`)
-- A desktop environment with `webkit2gtk` available (installed by most DEs)
+You only need two things to **run** the app — the packaged binaries already include everything else.
+
+1. **Linux** with a modern desktop environment (Fedora, Ubuntu, Debian, Arch, openSUSE…). Most DEs already ship `webkit2gtk`; if not, install it (`webkit2gtk4.1` on Fedora, `libwebkit2gtk-4.1-0` on Debian/Ubuntu).
+2. **[Claude Code CLI](https://docs.claude.com/en/docs/claude-code/quickstart)** installed and authenticated. The `claude` binary must be on your `PATH`.
+
+> You do **not** need to install Rust, Node.js, Tauri, or any build tool. Those are only required if you want to build from source.
 
 ## Installation
 
@@ -63,23 +66,38 @@ No official package yet — build from source (see below) or use the AppImage.
 
 ## Build from source
 
+Only needed if you want to hack on the code or build an unreleased version. Packaged releases already include the compiled binary.
+
+**Prerequisites (one-time setup):**
+
+- **Rust toolchain** (stable) — install via [rustup](https://rustup.rs):
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+- **Node.js 20+** and **pnpm** (`npm install -g pnpm`)
+- **System libraries** for WebKitGTK and bundling:
+  - Fedora: `sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel patchelf rpm-build`
+  - Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libssl-dev patchelf file`
+  - Arch: `sudo pacman -S webkit2gtk-4.1 libappindicator-gtk3 librsvg patchelf file`
+
+> You don't need to install the Tauri CLI globally — it's already declared as a dev dependency and `pnpm install` will pull it in.
+
+**Build:**
+
 ```bash
-# 1. System dependencies (Fedora example — adapt for your distro)
-sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file \
-    libappindicator-gtk3-devel librsvg2-devel patchelf
-
-# 2. Rust + Node
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# (Node 20+ with pnpm)
-
-# 3. Build
 git clone https://github.com/fabian-laine/claude-code-manager.git
 cd claude-code-manager
 pnpm install
 pnpm tauri build --bundles rpm deb appimage
 ```
 
-Artifacts land in `src-tauri/target/release/bundle/`.
+Artifacts land in `src-tauri/target/release/bundle/`. First build takes ~5 minutes because it compiles Tauri + dependencies; subsequent builds are incremental.
+
+**Run in dev mode:**
+
+```bash
+pnpm tauri dev
+```
 
 ## Troubleshooting
 
