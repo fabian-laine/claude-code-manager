@@ -50,7 +50,9 @@ jobs:
             patchelf \
             libssl-dev \
             file \
-            rpm
+            rpm \
+            cmake \
+            clang
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -74,8 +76,8 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Tauri bundles (deb, rpm, appimage)
-        run: pnpm tauri build --bundles deb rpm appimage
+      - name: Build Tauri bundles (deb, rpm, appimage) with stt
+        run: pnpm tauri build --bundles deb rpm appimage -- --features stt
 
       - name: Collect artifacts
         run: |
