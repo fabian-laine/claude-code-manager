@@ -91,7 +91,7 @@ export type Api = {
     model_path: string;
   }>;
   sttDownloadModel(): Promise<void>;
-  sttTranscribe(wav: Uint8Array): Promise<string>;
+  sttTranscribe(wav: Uint8Array, lang?: string): Promise<string>;
   loadHistoryChunk(
     projectId: string,
     beforeTs?: string | null,
@@ -149,8 +149,11 @@ async function makeTauriApi(): Promise<Api> {
       invoke<string>("copy_attachment", { projectId, srcPath }),
     sttStatus: () => invoke("stt_status"),
     sttDownloadModel: () => invoke("stt_download_model"),
-    sttTranscribe: (wav) =>
-      invoke<string>("stt_transcribe", { wav: Array.from(wav) }),
+    sttTranscribe: (wav, lang) =>
+      invoke<string>("stt_transcribe", {
+        wav: Array.from(wav),
+        lang: lang ?? null,
+      }),
     loadHistoryChunk: (projectId, beforeTs, hours) =>
       invoke<HistoryChunk>("load_history_chunk", {
         projectId,
@@ -257,9 +260,10 @@ function makeHttpApi(): Api {
     sttStatus: () => req("/api/stt/status"),
     sttDownloadModel: () =>
       req("/api/stt/download", { method: "POST" }),
-    async sttTranscribe(wav) {
+    async sttTranscribe(wav, lang) {
       const token = getWebToken();
-      const res = await fetch(`${base}/api/stt/transcribe`, {
+      const qs = lang ? `?lang=${encodeURIComponent(lang)}` : "";
+      const res = await fetch(`${base}/api/stt/transcribe${qs}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/octet-stream",

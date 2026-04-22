@@ -147,12 +147,18 @@ async fn stt_download_model(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn stt_transcribe(state: State<'_, AppState>, wav: Vec<u8>) -> Result<String, String> {
+async fn stt_transcribe(
+    state: State<'_, AppState>,
+    wav: Vec<u8>,
+    lang: Option<String>,
+) -> Result<String, String> {
     let path = state.stt_model_path.clone();
-    tokio::task::spawn_blocking(move || stt::transcribe_wav(&wav, &path))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || {
+        stt::transcribe_wav(&wav, &path, lang.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

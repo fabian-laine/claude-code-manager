@@ -39,7 +39,7 @@ pub async fn download_model(dest: &Path) -> Result<()> {
 }
 
 #[cfg(feature = "stt")]
-pub fn transcribe_wav(wav: &[u8], model_path: &Path) -> Result<String> {
+pub fn transcribe_wav(wav: &[u8], model_path: &Path, lang: Option<&str>) -> Result<String> {
     use hound::SampleFormat;
     use std::io::Cursor;
     use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -109,9 +109,10 @@ pub fn transcribe_wav(wav: &[u8], model_path: &Path) -> Result<String> {
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
-    // Auto-detect language. Without this, whisper assumes English even
-    // when the audio is in another language.
-    params.set_language(Some("auto"));
+    // Pass the caller-supplied language (e.g. "fr" from navigator.language)
+    // when available; otherwise let whisper auto-detect. whisper.cpp treats
+    // "auto" (and any unknown string) as "please detect", so this is safe.
+    params.set_language(Some(lang.unwrap_or("auto")));
     // Skip the typical non-speech tokens that Whisper emits when it hears
     // background noise — we want clean text only.
     params.set_suppress_blank(true);
@@ -137,7 +138,7 @@ pub fn transcribe_wav(wav: &[u8], model_path: &Path) -> Result<String> {
 }
 
 #[cfg(not(feature = "stt"))]
-pub fn transcribe_wav(_wav: &[u8], _model_path: &Path) -> Result<String> {
+pub fn transcribe_wav(_wav: &[u8], _model_path: &Path, _lang: Option<&str>) -> Result<String> {
     Err(anyhow!(
         "Speech-to-text was not compiled in. Rebuild with `--features stt` \
          (requires `cmake` and a C++ toolchain)."

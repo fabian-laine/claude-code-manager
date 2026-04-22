@@ -336,16 +336,23 @@ struct TranscribeResp {
     text: String,
 }
 
+#[derive(Deserialize)]
+struct TranscribeQuery {
+    lang: Option<String>,
+}
+
 async fn stt_transcribe(
     State(state): State<ServerState>,
     headers: HeaderMap,
+    Query(params): Query<TranscribeQuery>,
     body: Bytes,
 ) -> Result<Json<TranscribeResp>, StatusCode> {
     auth_check(&state, &headers).await?;
     let model_path = state.stt_model_path.clone();
     let bytes = body.to_vec();
+    let lang = params.lang.clone();
     let text = tokio::task::spawn_blocking(move || {
-        crate::stt::transcribe_wav(&bytes, &model_path)
+        crate::stt::transcribe_wav(&bytes, &model_path, lang.as_deref())
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

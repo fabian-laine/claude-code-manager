@@ -291,7 +291,13 @@
         return;
       }
       const api = await store.ensureApi();
-      const text = await api.sttTranscribe(wav);
+      // Pass the browser locale (e.g. "fr-FR" → "fr") so whisper doesn't
+      // silently default to English when detection is uncertain.
+      const lang =
+        typeof navigator !== "undefined" && navigator.language
+          ? navigator.language.split("-")[0]
+          : undefined;
+      const text = await api.sttTranscribe(wav, lang);
       if (text.trim()) {
         input = input ? `${input} ${text}` : text;
         queueMicrotask(() => textareaEl?.focus());
