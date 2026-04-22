@@ -106,6 +106,13 @@ fn send(bus: &EventBus, ev: ClaudeEvent) {
     let _ = bus.send(ev);
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct RunFlags {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub add_dirs: Vec<String>,
+}
+
 pub async fn run_claude(
     bus: EventBus,
     registry: Arc<ProcessRegistry>,
@@ -113,6 +120,7 @@ pub async fn run_claude(
     project_path: String,
     prompt: String,
     resume_session_id: Option<String>,
+    flags: RunFlags,
 ) -> Result<Option<String>> {
     if !Path::new(&project_path).exists() {
         return Err(anyhow!("Project path does not exist: {}", project_path));
@@ -137,6 +145,16 @@ pub async fn run_claude(
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .kill_on_drop(true);
+
+    if let Some(m) = &flags.model {
+        cmd.arg("--model").arg(m);
+    }
+    if let Some(e) = &flags.effort {
+        cmd.arg("--effort").arg(e);
+    }
+    for d in &flags.add_dirs {
+        cmd.arg("--add-dir").arg(d);
+    }
 
     if let Some(sid) = &resume_session_id {
         cmd.arg("--resume").arg(sid);

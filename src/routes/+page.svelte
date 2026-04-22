@@ -113,7 +113,10 @@
       {/if}
       {#if !(isMobile && (sidebarOpen || rightOpen))}
         <div class="flex-1 min-w-0 flex flex-col">
-          <Chat />
+          <Chat
+            onOpenSettings={() => (settingsOpen = true)}
+            onToggleRightPanel={toggleRight}
+          />
         </div>
       {/if}
       {#if rightOpen}

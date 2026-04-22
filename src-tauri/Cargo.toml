@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-manager"
-version = "0.2.0"
+version = "0.3.0"
 description = "Claude Code Manager"
 authors = ["e-xiste"]
 edition = "2021"
@@ -11,6 +11,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[features]
+default = []
+# Speech-to-text support (enables the mic button + /api/stt endpoints).
+# Requires cmake and a C++ toolchain (clang or gcc) at build time because
+# whisper-rs compiles whisper.cpp from source.
+#   Fedora:       sudo dnf install cmake clang
+#   Debian/Ubuntu sudo apt install cmake clang
+# Then build with:  pnpm tauri build -- --features stt
+stt = ["dep:whisper-rs", "dep:hound"]
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -32,3 +42,9 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "cors", "trace", "set-header"] }
 futures-util = "0.3"
 rand = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+whisper-rs = { version = "0.14", optional = true, default-features = false }
+hound = { version = "3.5", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
@@ -5,9 +6,33 @@ import tailwindcss from "@tailwindcss/vite";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+const SVELTE_VIRTUAL = /\.svelte\?/;
+
+function skipSvelteVirtualCss(plugin) {
+  if (!plugin?.transform) return plugin;
+  const orig = plugin.transform;
+  const isObject = typeof orig === "object" && orig !== null;
+  const handler = isObject ? orig.handler : orig;
+  function wrapped(code, id, opts) {
+    if (SVELTE_VIRTUAL.test(id)) return null;
+    return handler.call(this, code, id, opts);
+  }
+  return {
+    ...plugin,
+    transform: isObject ? { ...orig, handler: wrapped } : wrapped,
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [tailwindcss(), sveltekit()],
+  plugins: [
+    sveltekit(),
+    // Tailwind v4.2.x's vite plugin tries to parse Svelte virtual style
+    // modules (?svelte&...lang.css) as standalone CSS — but they sometimes
+    // contain JS (HMR injection, raw .svelte content) and crash with
+    // "Invalid declaration". We wrap Tailwind to skip those IDs entirely.
+    ...tailwindcss().map((p) => skipSvelteVirtualCss(p)),
+  ],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

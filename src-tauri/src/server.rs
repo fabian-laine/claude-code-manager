@@ -2,20 +2,21 @@ use crate::db::{Db, Project};
 use crate::history;
 use crate::session::{self, ClaudeEvent, EventBus, ProcessRegistry};
 use axum::{
+    body::Bytes,
     extract::{
         ws::{Message, WebSocket},
-        Path as AxPath, Query, State, WebSocketUpgrade,
+        DefaultBodyLimit, Path as AxPath, Query, State, WebSocketUpgrade,
     },
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{delete, get, post},
     Json, Router,
 };
+use crate::history::HistoryChunk;
 use axum_server::tls_rustls::RustlsConfig;
 use axum_server::Handle;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,7 @@ pub struct ServerState {
     pub bus: EventBus,
     pub token: Arc<Mutex<String>>,
     pub frontend_dir: PathBuf,
+    pub stt_model_path: PathBuf,
 }
 
 pub struct ServerHandle {
@@ -85,12 +87,24 @@ pub async fn start(
     let api = Router::new()
         .route("/projects", get(list_projects).post(add_project))
         .route("/projects/:id", delete(delete_project))
+        .route("/projects/:id/clear", post(clear_session))
+        .route(
+            "/projects/:id/attachments",
+            post(upload_attachment).layer(DefaultBodyLimit::max(100 * 1024 * 1024)),
+        )
+        .route("/stt/status", get(stt_status))
+        .route("/stt/download", post(stt_download))
+        .route(
+            "/stt/transcribe",
+            post(stt_transcribe).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
         .route("/projects/:id/history", get(load_history))
         .route("/projects/:id/messages", post(send_message))
         .route("/projects/:id/pause", post(pause_message))
         .route("/projects/:id/resume", post(resume_message))
         .route("/projects/:id/cancel", post(cancel_message))
         .route("/projects/:id/mcp", get(list_mcp_servers))
+        .route("/projects/:id/diff", get(git_diff))
         .route("/events", get(ws_handler))
         .route("/ping", get(ping));
 
@@ -238,11 +252,139 @@ async fn delete_project(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn clear_session(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Result<StatusCode, StatusCode> {
+    auth_check(&state, &headers).await?;
+    state
+        .db
+        .clear_last_session(&id)
+        .map(|_| StatusCode::OK)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Serialize)]
+struct AttachmentResponse {
+    ref_path: String,
+}
+
+async fn upload_attachment(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Bytes,
+) -> Result<Json<AttachmentResponse>, StatusCode> {
+    auth_check(&state, &headers).await?;
+    let filename = headers
+        .get("x-filename")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            // URL-decode minimally (spaces stored as %20)
+            percent_decode(s)
+        })
+        .unwrap_or_else(|| "file".to_string());
+
+    let project = state
+        .db
+        .get_project(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let ref_path =
+        crate::save_attachment_to_project(&project.path, &filename, &body)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(AttachmentResponse { ref_path }))
+}
+
+#[derive(Serialize)]
+struct SttStatusResp {
+    available: bool,
+    model_ready: bool,
+    model_path: String,
+}
+
+async fn stt_status(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+) -> Result<Json<SttStatusResp>, StatusCode> {
+    auth_check(&state, &headers).await?;
+    Ok(Json(SttStatusResp {
+        available: crate::stt::is_available(),
+        model_ready: state.stt_model_path.exists(),
+        model_path: state.stt_model_path.to_string_lossy().to_string(),
+    }))
+}
+
+async fn stt_download(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, StatusCode> {
+    auth_check(&state, &headers).await?;
+    if state.stt_model_path.exists() {
+        return Ok(StatusCode::OK);
+    }
+    crate::stt::download_model(&state.stt_model_path)
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Serialize)]
+struct TranscribeResp {
+    text: String,
+}
+
+async fn stt_transcribe(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<TranscribeResp>, StatusCode> {
+    auth_check(&state, &headers).await?;
+    let model_path = state.stt_model_path.clone();
+    let bytes = body.to_vec();
+    let text = tokio::task::spawn_blocking(move || {
+        crate::stt::transcribe_wav(&bytes, &model_path)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(TranscribeResp { text }))
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[derive(Deserialize)]
+struct HistoryQuery {
+    before_ts: Option<String>,
+    hours: Option<u32>,
+}
+
 async fn load_history(
     State(state): State<ServerState>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
-) -> Result<Json<Vec<Value>>, StatusCode> {
+    Query(params): Query<HistoryQuery>,
+) -> Result<Json<HistoryChunk>, StatusCode> {
     auth_check(&state, &headers).await?;
     let project = state
         .db
@@ -253,12 +395,24 @@ async fn load_history(
         Some(s) => s,
         None => match history::latest_session_id(&project.path) {
             Some(s) => s,
-            None => return Ok(Json(vec![])),
+            None => {
+                return Ok(Json(HistoryChunk {
+                    events: vec![],
+                    oldest_ts: None,
+                    has_more: false,
+                    session_id: None,
+                }))
+            }
         },
     };
-    history::load_session(&project.path, &sid)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    history::load_session_chunk(
+        &project.path,
+        &sid,
+        params.before_ts.as_deref(),
+        params.hours.unwrap_or(2),
+    )
+    .map(Json)
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[derive(Deserialize)]
@@ -279,13 +433,26 @@ async fn send_message(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     let resume = project.last_session_id.clone();
+    let flags = crate::load_project_flags(&state.db, &id);
     let db = state.db.clone();
     let bus = state.bus.clone();
     let registry = state.registry.clone();
     let pid = id.clone();
     tokio::spawn(async move {
-        match session::run_claude(bus, registry, pid.clone(), project.path, body.prompt, resume)
-            .await
+        match session::run_claude(
+            bus,
+            registry,
+            pid.clone(),
+            project.path,
+            body.prompt,
+            resume,
+            session::RunFlags {
+                model: flags.model,
+                effort: flags.effort,
+                add_dirs: flags.add_dirs,
+            },
+        )
+        .await
         {
             Ok(Some(sid)) => {
                 let _ = db.set_last_session(&pid, &sid);
@@ -350,6 +517,27 @@ struct McpServer {
     name: String,
     status: String,
     ok: bool,
+}
+
+async fn git_diff(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Result<String, StatusCode> {
+    auth_check(&state, &headers).await?;
+    let project = state
+        .db
+        .get_project(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let output = tokio::process::Command::new("git")
+        .arg("diff")
+        .arg("HEAD")
+        .current_dir(&project.path)
+        .output()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 async fn list_mcp_servers(

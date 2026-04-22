@@ -20,6 +20,10 @@ Under the hood, the app spawns real `claude` processes with `--output-format str
 - **CLI-style rendering** — tool calls (Read, Edit, Write, Bash, Grep, Glob, TodoWrite, Task, WebFetch…) are rendered with icons, collapsible details, real diff view for `Edit`, todo checklists, and syntax-highlighted code blocks.
 - **Full Markdown** in assistant responses (GFM tables, code blocks with highlight.js, headings, lists, quotes, links).
 - **Mermaid diagrams** — code blocks tagged `mermaid` (or auto-detected) are rendered as interactive diagrams directly in the chat, with dark theme support.
+- **Slash command palette** — type `/` in the composer to open the palette (arrows + Enter, Tab to auto-complete). Includes 19 commands covering session control (`/clear`, `/copy`, `/copy-session`, `/diff`, `/exit`), file editors (`/memory`, `/agents`, `/skills`, `/hooks`, `/permissions`, `/keybindings`), canonical prompts (`/init`, `/compact`, `/recap`, `/review`, `/security-review`), per-project runtime flags (`/model`, `/effort`, `/add-dir`), and stats (`/cost`, `/context`, `/stats`). See the [Slash commands](#slash-commands) section.
+- **File attachments** — drop files on the chat or click the paperclip. Each file is copied into the project's `.ccm-attachments/` folder and referenced in your message as `@path`, so Claude reads them with its own tools.
+- **Speech-to-text (opt-in)** — record from the composer mic; audio is transcribed locally on the desktop via [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (no cloud). Works identically from the remote phone UI — the phone sends audio to your PC which runs Whisper. Requires the `stt` Cargo feature (see Build from source).
+- **Paginated history** — transcripts load 2 hours at a time and older ranges stream in as you scroll up, keeping long projects snappy.
 - **Pause with added guidance** — mid-turn, freeze the entire Claude process tree with `SIGSTOP`, optionally type extra instructions, then resume (either continue as-is with `SIGCONT`, or abort the current turn and inject your new message into the same conversation via `--resume`).
 - **Right panel** — collapsible panel showing configured MCP servers (live from `claude mcp list`), quick actions (open project folder, copy session id), and project metadata.
 - **Remote access from your phone** — toggleable HTTP/WebSocket server that serves the same UI over your network. Combine with [Tailscale](https://tailscale.com) for secure access from anywhere without exposing ports.
@@ -92,6 +96,18 @@ cd claude-code-manager
 pnpm install
 pnpm tauri build --bundles rpm deb appimage
 ```
+
+**Optional — enable speech-to-text:** the mic button in the composer is hidden by default because it compiles [whisper.cpp](https://github.com/ggerganov/whisper.cpp) from source. Install `cmake` and `clang`, then build with the `stt` feature:
+
+```bash
+# Fedora: sudo dnf install cmake clang
+# Debian/Ubuntu: sudo apt install cmake clang
+pnpm tauri build -- --features stt
+# or in dev:
+pnpm tauri dev -- --features stt
+```
+
+On first use, the app downloads the Whisper `base` model (~142 MB) via `curl` into the app data dir.
 
 Artifacts land in `src-tauri/target/release/bundle/`. First build takes ~5 minutes because it compiles Tauri + dependencies; subsequent builds are incremental.
 
@@ -170,6 +186,41 @@ Tapping the icon opens Claude Code Manager in standalone mode, with its own icon
 
 **"Connection refused" on mobile** — check Tailscale is connected on the phone (the app should show "Connected"). Also verify the desktop app is still running and the server is enabled in Settings.
 
+## Slash commands
+
+Type `/` in the composer to open a fuzzy-filterable palette. The list below mirrors what you'll see; arrow keys navigate, **Enter** runs, **Tab** completes the name without running, **Esc** dismisses.
+
+The app does **not** pass slash commands through to the Claude CLI — those are interactive TTY features that don't exist in `--output-format stream-json`. Instead, each command is implemented natively against your local filesystem, the project's session transcript, or by sending Claude a canonical prompt.
+
+| Command | What it does |
+| --- | --- |
+| `/help` | Show the full command list in a modal. |
+| `/clear` | Start a new Claude session for this project (the previous transcript stays on disk). |
+| `/copy [N]` | Copy the Nth most recent assistant message to the clipboard (default: last). |
+| `/copy-session` | Copy the current session ID to the clipboard. |
+| `/diff` | Open a modal showing `git diff HEAD` for the project. |
+| `/open` | Open the project folder in your file manager. |
+| `/mcp` | Toggle the right-hand Info panel (MCP servers + project metadata). |
+| `/settings` | Open the Settings modal (remote access, etc.). |
+| `/exit` | Close the application window. |
+| `/release-notes`, `/feedback` | Open the GitHub releases / issues page. |
+| `/memory` | Edit the project's `CLAUDE.md` and your user `~/.claude/CLAUDE.md` in tabs. |
+| `/agents`, `/skills` | Browse and view `.md` files under `.claude/agents` / `.claude/skills` (project + user). |
+| `/hooks` | View the `hooks` section of `.claude/settings.json` (project + user). |
+| `/permissions` | Edit `.claude/settings.json` (project + user). |
+| `/keybindings` | Edit `~/.claude/keybindings.json`. |
+| `/init` | Send Claude a canonical "analyze this codebase and write a CLAUDE.md" prompt. |
+| `/compact [focus]` | Ask Claude for a concise recap to use as next-session context. |
+| `/recap` | Ask Claude for a one-line summary of this session. |
+| `/review` | Ask Claude to review the current branch's changes. |
+| `/security-review` | Ask Claude to audit pending changes for OWASP-style issues. |
+| `/cost` | Show token usage and an estimated USD cost for the current session. |
+| `/context` | Show how much of the model's context window the next turn will consume. |
+| `/stats` | Cross-session usage aggregated across all your projects. |
+| `/model [model]` | Pick the model (`haiku` / `sonnet` / `opus`) for the next message. Persisted per project — passed as `--model`. |
+| `/effort [level]` | Set effort level (`low` / `medium` / `high` / `xhigh`). Persisted per project — passed as `--effort`. |
+| `/add-dir [path]` | Manage extra working directories Claude can access. Persisted per project — each path becomes an `--add-dir` flag. |
+
 ## Troubleshooting
 
 **The app crashes on launch with a Wayland protocol error.** This is a known webkit2gtk issue on recent Fedora/GNOME. The installed `.desktop` file already sets the workaround env vars, but if you launch the binary directly:
@@ -200,7 +251,8 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 claude-code-m
 ## Roadmap
 
 - [x] Remote access (HTTP/WS server + mobile UI)
-- [ ] Slash command palette
+- [x] Slash command palette
+- [ ] Conversation branching (`/branch`)
 - [ ] Arch AUR package
 
 ## License

@@ -7,6 +7,9 @@ type ProjectState = {
   busy: boolean;
   paused: boolean;
   historyLoaded: boolean;
+  oldestTs: string | null;
+  hasMoreHistory: boolean;
+  loadingMore: boolean;
 };
 
 function createStore() {
@@ -22,7 +25,15 @@ function createStore() {
 
   function ensureState(id: string): ProjectState {
     if (!byProject[id]) {
-      byProject[id] = { messages: [], busy: false, paused: false, historyLoaded: false };
+      byProject[id] = {
+        messages: [],
+        busy: false,
+        paused: false,
+        historyLoaded: false,
+        oldestTs: null,
+        hasMoreHistory: false,
+        loadingMore: false,
+      };
     }
     return byProject[id];
   }
@@ -59,19 +70,54 @@ function createStore() {
     if (activeId === id) activeId = projects[0]?.id ?? null;
   }
 
+  async function clearSession(id: string) {
+    const a = await ensureApi();
+    await a.clearSession(id);
+    const p = projects.find((x) => x.id === id);
+    if (p) p.last_session_id = null;
+    const st = ensureState(id);
+    st.messages = [];
+    st.oldestTs = null;
+    st.hasMoreHistory = false;
+    st.historyLoaded = true;
+  }
+
   async function loadHistory(id: string) {
     const a = await ensureApi();
     const st = ensureState(id);
     if (st.historyLoaded) return;
     try {
-      const events = await a.loadHistory(id);
+      const chunk = await a.loadHistoryChunk(id, null, 2);
       const rendered: RenderedMessage[] = [];
-      for (const ev of events) rendered.push(...parseClaudeEvent(ev));
+      for (const ev of chunk.events) rendered.push(...parseClaudeEvent(ev));
       st.messages = rendered;
+      st.oldestTs = chunk.oldest_ts;
+      st.hasMoreHistory = chunk.has_more;
       st.historyLoaded = true;
     } catch (e) {
       console.error("loadHistory failed", e);
       st.historyLoaded = true;
+    }
+  }
+
+  async function loadMoreHistory(id: string): Promise<number> {
+    const a = await ensureApi();
+    const st = ensureState(id);
+    if (!st.hasMoreHistory || st.loadingMore || !st.oldestTs) return 0;
+    st.loadingMore = true;
+    try {
+      const chunk = await a.loadHistoryChunk(id, st.oldestTs, 2);
+      const rendered: RenderedMessage[] = [];
+      for (const ev of chunk.events) rendered.push(...parseClaudeEvent(ev));
+      st.messages = [...rendered, ...st.messages];
+      st.oldestTs = chunk.oldest_ts ?? st.oldestTs;
+      st.hasMoreHistory = chunk.has_more;
+      return rendered.length;
+    } catch (e) {
+      console.error("loadMoreHistory failed", e);
+      return 0;
+    } finally {
+      st.loadingMore = false;
     }
   }
 
@@ -200,6 +246,7 @@ function createStore() {
     refreshProjects,
     addProject,
     deleteProject,
+    clearSession,
     sendMessage,
     cancelMessage,
     pauseMessage,
@@ -208,6 +255,7 @@ function createStore() {
     setActive,
     initListener,
     ensureApi,
+    loadMoreHistory,
   };
 }
 
