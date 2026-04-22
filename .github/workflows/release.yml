@@ -16,7 +16,7 @@ permissions:
 jobs:
   build-linux:
     name: Build Linux bundles
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -94,7 +94,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: build-linux
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
