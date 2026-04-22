@@ -1,6 +1,7 @@
 import { getApi, type Api } from "./api";
 import type { Project, ClaudeEvent, RenderedMessage } from "./types";
 import { parseClaudeEvent } from "./parseEvent";
+import { playFinishChime } from "./notify";
 
 type ProjectState = {
   messages: RenderedMessage[];
@@ -10,6 +11,7 @@ type ProjectState = {
   oldestTs: string | null;
   hasMoreHistory: boolean;
   loadingMore: boolean;
+  hasUnseenFinish: boolean;
 };
 
 function createStore() {
@@ -33,6 +35,7 @@ function createStore() {
         oldestTs: null,
         hasMoreHistory: false,
         loadingMore: false,
+        hasUnseenFinish: false,
       };
     }
     return byProject[id];
@@ -192,6 +195,12 @@ function createStore() {
     } else if (ev.kind === "finished") {
       st.busy = false;
       st.paused = false;
+      // If the user is currently looking at another project, flag this one
+      // so the sidebar shows a green dot, and play a short chime.
+      if (ev.project_id !== activeId) {
+        st.hasUnseenFinish = true;
+        playFinishChime();
+      }
     } else if (ev.kind === "paused") {
       st.paused = true;
     } else if (ev.kind === "resumed") {
@@ -229,6 +238,9 @@ function createStore() {
 
   function setActive(id: string) {
     activeId = id;
+    const st = ensureState(id);
+    // Clear the unseen-finish flag for the project the user just opened.
+    st.hasUnseenFinish = false;
     loadHistory(id);
   }
 

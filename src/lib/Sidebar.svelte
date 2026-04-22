@@ -74,7 +74,9 @@
         <span
           class="shrink-0 w-2 h-2 rounded-full {st.busy
             ? 'bg-warn shadow-[0_0_0_3px_rgba(217,119,6,0.2)] animate-pulse'
-            : 'bg-[#444]'}"
+            : st.hasUnseenFinish
+              ? 'bg-ok shadow-[0_0_0_3px_rgba(122,168,112,0.2)]'
+              : 'bg-[#444]'}"
         ></span>
         <div class="flex-1 min-w-0 overflow-hidden">
           <div class="text-[13px] font-medium text-text-0 truncate">
