@@ -1,7 +1,16 @@
 // @ts-nocheck
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
+
+// Expose the package.json version to the client as import.meta.env.VITE_APP_VERSION
+// so the UI can show which release is installed without hardcoding.
+const pkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8"),
+);
+process.env.VITE_APP_VERSION = pkg.version;
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;

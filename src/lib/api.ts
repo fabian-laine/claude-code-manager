@@ -86,6 +86,8 @@ export type ClaudeUsage = {
   session_cost_usd?: number;
   error?: string;
   preview?: string;
+  stats?: Record<string, unknown>;
+  debug_log?: string;
 };
 
 export type Api = {

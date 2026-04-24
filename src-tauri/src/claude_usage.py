@@ -47,8 +47,11 @@ def resolve_claude() -> str:
     return "claude"  # last-ditch — execvp will fail with a useful error
 
 
-def capture() -> bytes:
+def capture(stats: dict) -> bytes:
+    """Capture the TUI output. `stats` is mutated with per-phase timing/bytes
+    so the caller can surface diagnostics when parsing fails."""
     claude_bin = resolve_claude()
+    stats["claude_bin"] = claude_bin
     pid, fd = pty.fork()
     if pid == 0:
         # child
@@ -65,19 +68,30 @@ def capture() -> bytes:
         # Wait for claude to finish booting (MCP plugins can delay this by
         # several seconds — e.g. claude-mem fetches memory over localhost).
         # Exit early after 1.2s of silence, hard cap at 20s.
-        drain_until_idle(fd, max_wait=20.0, quiet_ms=1200)
-        # Clear any stray input, type the command at once, then submit.
-        os.write(fd, b"\x15/usage")
-        time.sleep(0.3)
+        t0 = time.time()
+        boot = drain_until_idle(fd, max_wait=20.0, quiet_ms=1200)
+        stats["boot_ms"] = int((time.time() - t0) * 1000)
+        stats["boot_bytes"] = len(boot)
+        # Dismiss any pending popup/dialog, then clear any stray input.
+        os.write(fd, b"\x1b")
+        time.sleep(0.15)
+        os.write(fd, b"\x15")
+        time.sleep(0.1)
+        # Type `/usage` at once and submit.
+        os.write(fd, b"/usage")
+        time.sleep(0.4)
         os.write(fd, b"\r")
         # Drain the response, early-exit once we see the usage markers.
-        out = drain_until_markers(fd, max_wait=15.0, quiet_ms=1500)
+        t1 = time.time()
+        resp = drain_until_markers(fd, max_wait=15.0, quiet_ms=1500)
+        stats["response_ms"] = int((time.time() - t1) * 1000)
+        stats["response_bytes"] = len(resp)
         # Send exit so claude cleans up its terminal state.
         try:
             os.write(fd, b"/exit\r")
         except OSError:
             pass
-        return out
+        return boot + resp
     finally:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -183,13 +197,31 @@ def find_section(text: str, marker_pattern: str) -> dict | None:
     }
 
 
-def main() -> None:
+DEBUG_LOG = "/tmp/ccm-usage-debug.log"
+
+
+def write_debug(raw: bytes, cleaned: str, stats: dict) -> None:
     try:
-        raw = capture()
+        with open(DEBUG_LOG, "wb") as f:
+            f.write(f"=== stats ===\n{json.dumps(stats, indent=2)}\n".encode())
+            f.write(b"\n=== cleaned ===\n")
+            f.write(cleaned.encode("utf-8", errors="replace"))
+            f.write(b"\n\n=== raw (with ANSI) ===\n")
+            f.write(raw)
+    except OSError:
+        pass
+
+
+def main() -> None:
+    stats: dict = {}
+    try:
+        raw = capture(stats)
     except Exception as e:
-        print(json.dumps({"error": f"capture failed: {e}"}))
+        print(json.dumps({"error": f"capture failed: {e}", "stats": stats}))
         return
     cleaned = ANSI_RE.sub(b"", raw).decode("utf-8", errors="replace")
+    stats["total_bytes"] = len(raw)
+    stats["cleaned_len"] = len(cleaned)
 
     # TUI output tends to eat spaces between words, so match flexibly.
     result: dict = {}
@@ -208,11 +240,18 @@ def main() -> None:
         result["session_cost_usd"] = float(cost_m.group(1))
 
     if not result:
-        # Keep a preview of the cleaned TUI text so we can adjust regexes
-        # without another build cycle when Claude changes its layout.
-        preview = cleaned[-1200:].replace("\n", " ").replace("\r", " ")
-        preview = re.sub(r"\s+", " ", preview).strip()
-        print(json.dumps({"error": "no usage sections found", "preview": preview}))
+        # Dump everything to a debug file so we can diagnose without another
+        # build cycle, and surface a short preview + stats in the error JSON.
+        write_debug(raw, cleaned, stats)
+        flat = re.sub(r"\s+", " ", cleaned).strip()
+        head = flat[:600]
+        tail = flat[-600:] if len(flat) > 600 else ""
+        print(json.dumps({
+            "error": "no usage sections found",
+            "preview": f"HEAD: {head}  …  TAIL: {tail}",
+            "stats": stats,
+            "debug_log": DEBUG_LOG,
+        }))
         return
     print(json.dumps(result))
 

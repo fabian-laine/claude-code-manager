@@ -293,7 +293,11 @@ function createStore() {
       const a = await ensureApi();
       const u = await a.claudeUsage();
       if (u.error) {
-        claudeUsageError = u.preview ? `${u.error} — ${u.preview}` : u.error;
+        const parts = [u.error];
+        if (u.stats) parts.push(`stats: ${JSON.stringify(u.stats)}`);
+        if (u.debug_log) parts.push(`log: ${u.debug_log}`);
+        if (u.preview) parts.push(u.preview);
+        claudeUsageError = parts.join(" — ");
       } else {
         claudeUsage = u;
         claudeUsageUpdatedAt = Date.now();

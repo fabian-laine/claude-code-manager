@@ -112,4 +112,7 @@
       </button>
     </footer>
   {/if}
+  <div class="text-[10px] text-text-3 text-center px-2 py-1 opacity-60 select-none">
+    v{import.meta.env.VITE_APP_VERSION}
+  </div>
 </aside>
