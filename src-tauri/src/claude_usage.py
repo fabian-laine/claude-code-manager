@@ -62,15 +62,16 @@ def capture() -> bytes:
         # subprocess), the PTY defaults to 0x0 and Claude's TUI renders
         # collapsed — section headers never appear. Force a reasonable size.
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
-        # Drain the initial UI for a few seconds before sending input.
-        drain(fd, 5.0)
-        # Type "/usage" one char at a time so the autocomplete menu settles.
-        for c in b"/usage":
-            os.write(fd, bytes([c]))
-            time.sleep(0.05)
-        time.sleep(0.5)
+        # Wait for claude to finish booting (MCP plugins can delay this by
+        # several seconds — e.g. claude-mem fetches memory over localhost).
+        # Exit early after 1.2s of silence, hard cap at 20s.
+        drain_until_idle(fd, max_wait=20.0, quiet_ms=1200)
+        # Clear any stray input, type the command at once, then submit.
+        os.write(fd, b"\x15/usage")
+        time.sleep(0.3)
         os.write(fd, b"\r")
-        out = drain(fd, 8.0)
+        # Drain the response, early-exit once we see the usage markers.
+        out = drain_until_markers(fd, max_wait=15.0, quiet_ms=1500)
         # Send exit so claude cleans up its terminal state.
         try:
             os.write(fd, b"/exit\r")
@@ -102,6 +103,61 @@ def drain(fd: int, seconds: float) -> bytes:
         if not chunk:
             break
         out += chunk
+    return out
+
+
+def drain_until_idle(fd: int, max_wait: float, quiet_ms: int) -> bytes:
+    """Read until `quiet_ms` elapses with no new bytes, or `max_wait` expires."""
+    out = b""
+    deadline = time.time() + max_wait
+    last_activity = time.time()
+    while time.time() < deadline:
+        r, _, _ = select.select([fd], [], [], 0.2)
+        if r:
+            try:
+                chunk = os.read(fd, 16384)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+            last_activity = time.time()
+        elif (time.time() - last_activity) * 1000 >= quiet_ms:
+            break
+    return out
+
+
+_USAGE_MARKERS = re.compile(rb"%\s*used|Resets?\s", flags=re.IGNORECASE)
+
+
+def drain_until_markers(fd: int, max_wait: float, quiet_ms: int) -> bytes:
+    """Like drain_until_idle, but exits as soon as usage markers appear AND
+    a short quiet period follows (so we don't cut off mid-render)."""
+    out = b""
+    deadline = time.time() + max_wait
+    last_activity = time.time()
+    saw_markers_at = None
+    while time.time() < deadline:
+        r, _, _ = select.select([fd], [], [], 0.2)
+        if r:
+            try:
+                chunk = os.read(fd, 16384)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+            last_activity = time.time()
+            if saw_markers_at is None and _USAGE_MARKERS.search(ANSI_RE.sub(b"", out)):
+                saw_markers_at = time.time()
+        else:
+            quiet_for = (time.time() - last_activity) * 1000
+            # Once the page rendered, 800ms of silence is enough.
+            if saw_markers_at is not None and quiet_for >= 800:
+                break
+            # Nothing yet: bail after `quiet_ms` of dead air.
+            if saw_markers_at is None and quiet_for >= quiet_ms:
+                break
     return out
 
 
