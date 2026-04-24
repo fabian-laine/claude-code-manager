@@ -72,12 +72,18 @@ def capture(stats: dict) -> bytes:
         boot = drain_until_idle(fd, max_wait=20.0, quiet_ms=1200)
         stats["boot_ms"] = int((time.time() - t0) * 1000)
         stats["boot_bytes"] = len(boot)
-        # Dismiss any pending popup/dialog, then clear any stray input.
-        os.write(fd, b"\x1b")
-        time.sleep(0.15)
+        # If claude shows its "trust this folder?" prompt (triggered when the
+        # cwd hasn't been accepted before), send "1\r" to accept and wait for
+        # the TUI to re-render. Without this, our subsequent /usage is lost.
+        if _has_trust_prompt(boot):
+            stats["trust_prompt"] = True
+            os.write(fd, b"1\r")
+            extra = drain_until_idle(fd, max_wait=10.0, quiet_ms=1000)
+            boot += extra
+            stats["trust_extra_bytes"] = len(extra)
+        # Clear any stray input, then type `/usage` and submit.
         os.write(fd, b"\x15")
         time.sleep(0.1)
-        # Type `/usage` at once and submit.
         os.write(fd, b"/usage")
         time.sleep(0.4)
         os.write(fd, b"\r")
@@ -142,6 +148,13 @@ def drain_until_idle(fd: int, max_wait: float, quiet_ms: int) -> bytes:
 
 
 _USAGE_MARKERS = re.compile(rb"%\s*used|Resets?\s", flags=re.IGNORECASE)
+_TRUST_MARKER = re.compile(rb"trust\s*this\s*folder", flags=re.IGNORECASE)
+
+
+def _has_trust_prompt(raw: bytes) -> bool:
+    # The TUI strips whitespace inconsistently, so match tolerantly on the
+    # ANSI-stripped output.
+    return bool(_TRUST_MARKER.search(ANSI_RE.sub(b"", raw)))
 
 
 def drain_until_markers(fd: int, max_wait: float, quiet_ms: int) -> bytes:
