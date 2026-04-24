@@ -8,24 +8,60 @@ If Claude Code changes its output format we'll need to adjust regexes.
 Outputs a single JSON line on stdout: the parsed usage, or {"error": "..."}
 on failure.
 """
+import fcntl
 import json
 import os
 import pty
 import re
 import select
 import signal
+import struct
 import sys
+import termios
 import time
 
 ANSI_RE = re.compile(rb"\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][^\x07]*\x07|\x1B[=><]")
 
 
+def resolve_claude() -> str:
+    """Find the `claude` binary. Desktop-launched apps on Linux often don't
+    have ~/.local/bin in PATH, so fall back to common install locations."""
+    home = os.path.expanduser("~")
+    candidates = [
+        os.path.join(home, ".local/bin/claude"),
+        os.path.join(home, ".claude/local/claude"),
+        os.path.join(home, ".bun/bin/claude"),
+        os.path.join(home, ".npm-global/bin/claude"),
+        "/usr/local/bin/claude",
+        "/usr/bin/claude",
+        "/opt/homebrew/bin/claude",
+    ]
+    # PATH lookup first (cheap), then fallback probes.
+    from shutil import which
+    found = which("claude")
+    if found:
+        return found
+    for p in candidates:
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return "claude"  # last-ditch — execvp will fail with a useful error
+
+
 def capture() -> bytes:
+    claude_bin = resolve_claude()
     pid, fd = pty.fork()
     if pid == 0:
         # child
-        os.execvp("claude", ["claude"])
+        try:
+            os.execv(claude_bin, ["claude"])
+        except OSError as e:
+            sys.stderr.write(f"execv({claude_bin}) failed: {e}\n")
+            os._exit(127)
     try:
+        # When spawned without a controlling terminal (e.g. from the Tauri
+        # subprocess), the PTY defaults to 0x0 and Claude's TUI renders
+        # collapsed — section headers never appear. Force a reasonable size.
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
         # Drain the initial UI for a few seconds before sending input.
         drain(fd, 5.0)
         # Type "/usage" one char at a time so the autocomplete menu settles.
@@ -116,7 +152,11 @@ def main() -> None:
         result["session_cost_usd"] = float(cost_m.group(1))
 
     if not result:
-        print(json.dumps({"error": "no usage sections found"}))
+        # Keep a preview of the cleaned TUI text so we can adjust regexes
+        # without another build cycle when Claude changes its layout.
+        preview = cleaned[-1200:].replace("\n", " ").replace("\r", " ")
+        preview = re.sub(r"\s+", " ", preview).strip()
+        print(json.dumps({"error": "no usage sections found", "preview": preview}))
         return
     print(json.dumps(result))
 

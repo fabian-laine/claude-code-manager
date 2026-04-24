@@ -85,6 +85,7 @@ export type ClaudeUsage = {
   week_sonnet?: UsageSection;
   session_cost_usd?: number;
   error?: string;
+  preview?: string;
 };
 
 export type Api = {
