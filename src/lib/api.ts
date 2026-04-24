@@ -74,6 +74,19 @@ export type ProjectFlags = {
   add_dirs: string[];
 };
 
+export type UsageSection = {
+  percent: number;
+  resets: string | null;
+};
+
+export type ClaudeUsage = {
+  session?: UsageSection;
+  week_all?: UsageSection;
+  week_sonnet?: UsageSection;
+  session_cost_usd?: number;
+  error?: string;
+};
+
 export type Api = {
   listProjects(): Promise<Project[]>;
   addProject(name: string, path: string): Promise<Project>;
@@ -92,6 +105,7 @@ export type Api = {
   }>;
   sttDownloadModel(): Promise<void>;
   sttTranscribe(wav: Uint8Array, lang?: string): Promise<string>;
+  claudeUsage(): Promise<ClaudeUsage>;
   loadHistoryChunk(
     projectId: string,
     beforeTs?: string | null,
@@ -154,6 +168,7 @@ async function makeTauriApi(): Promise<Api> {
         wav: Array.from(wav),
         lang: lang ?? null,
       }),
+    claudeUsage: () => invoke<ClaudeUsage>("claude_usage"),
     loadHistoryChunk: (projectId, beforeTs, hours) =>
       invoke<HistoryChunk>("load_history_chunk", {
         projectId,
@@ -260,6 +275,7 @@ function makeHttpApi(): Api {
     sttStatus: () => req("/api/stt/status"),
     sttDownloadModel: () =>
       req("/api/stt/download", { method: "POST" }),
+    claudeUsage: () => req<ClaudeUsage>("/api/usage"),
     async sttTranscribe(wav, lang) {
       const token = getWebToken();
       const qs = lang ? `?lang=${encodeURIComponent(lang)}` : "";

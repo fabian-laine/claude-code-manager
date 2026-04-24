@@ -3,6 +3,7 @@ mod history;
 mod server;
 mod session;
 mod stt;
+mod usage;
 
 use db::{Db, Project};
 use server::{ServerHandle, ServerState, TlsPaths};
@@ -144,6 +145,11 @@ async fn stt_download_model(state: State<'_, AppState>) -> Result<(), String> {
         return Ok(());
     }
     stt::download_model(&path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn claude_usage() -> Result<serde_json::Value, String> {
+    usage::fetch_claude_usage().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1063,6 +1069,7 @@ pub fn run() {
             stt_status,
             stt_download_model,
             stt_transcribe,
+            claude_usage,
             load_history_chunk,
             send_message,
             cancel_message,

@@ -722,6 +722,47 @@
     </div>
 
     <div class="shrink-0 p-4 border-t border-line bg-bg-1">
+      {#if st?.contextTokens && st.contextTokens > 100_000 && !st.contextDismissed}
+        <div
+          class="mb-2 px-3 py-2 rounded-md border border-warn bg-[#2a1f10] text-text-1 text-[12px] flex items-start justify-between gap-3"
+        >
+          <span>
+            This session's context is <strong>{Math.round(st.contextTokens / 1000)}k tokens</strong
+            > — every new turn re-pays that as input. Consider running
+            <code class="bg-bg-2 px-1 rounded">/compact</code> to summarize and start a leaner session.
+          </span>
+          <div class="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onclick={() => {
+                input = "/compact";
+                queueMicrotask(() => textareaEl?.focus());
+              }}
+              class="bg-warn text-bg-1 border-none rounded px-2 py-0.5 text-[11px] font-medium cursor-pointer hover:brightness-110"
+            >
+              Run /compact
+            </button>
+            <button
+              type="button"
+              onclick={() => store.activeId && store.dismissContextWarning(store.activeId)}
+              class="bg-transparent border-none text-text-3 hover:text-text-1 cursor-pointer text-lg leading-none px-1"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      {/if}
+      {#if st?.autoPaused}
+        <div
+          class="mb-2 px-3 py-2 rounded-md border border-line-2 bg-bg-2 text-text-2 text-[12px] flex items-start justify-between gap-3"
+        >
+          <span>
+            Auto-paused after 5 min running in the background. Click
+            <strong>Resume</strong> below, or abort if you don't need it.
+          </span>
+        </div>
+      {/if}
       {#if sttError}
         <div
           class="mb-2 text-danger text-[12px] flex items-start justify-between gap-2"

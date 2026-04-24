@@ -1,4 +1,4 @@
-import { getApi, type Api } from "./api";
+import { getApi, type Api, type ClaudeUsage } from "./api";
 import type { Project, ClaudeEvent, RenderedMessage } from "./types";
 import { parseClaudeEvent } from "./parseEvent";
 import { playFinishChime } from "./notify";
@@ -12,12 +12,31 @@ type ProjectState = {
   hasMoreHistory: boolean;
   loadingMore: boolean;
   hasUnseenFinish: boolean;
+  contextTokens: number | null;
+  contextDismissed: boolean;
+  busyStartedAt: number | null;
+  autoPaused: boolean;
 };
+
+// Warn above this many tokens in the last result's context to suggest /compact.
+export const CONTEXT_WARN_THRESHOLD = 100_000;
+
+// Auto-pause a background session that has been busy for this many minutes.
+// 0 disables the feature.
+const AUTO_PAUSE_AFTER_MS = 5 * 60 * 1000;
+const AUTO_PAUSE_CHECK_INTERVAL_MS = 30_000;
+
+// Poll the Claude CLI /usage view this often.
+const USAGE_POLL_INTERVAL_MS = 20 * 60 * 1000;
 
 function createStore() {
   let projects = $state<Project[]>([]);
   let activeId = $state<string | null>(null);
   const byProject = $state<Record<string, ProjectState>>({});
+  let claudeUsage = $state<ClaudeUsage | null>(null);
+  let claudeUsageLoading = $state(false);
+  let claudeUsageError = $state<string | null>(null);
+  let claudeUsageUpdatedAt = $state<number | null>(null);
   let api: Api | null = null;
 
   async function ensureApi(): Promise<Api> {
@@ -36,6 +55,10 @@ function createStore() {
         hasMoreHistory: false,
         loadingMore: false,
         hasUnseenFinish: false,
+        contextTokens: null,
+        contextDismissed: false,
+        busyStartedAt: null,
+        autoPaused: false,
       };
     }
     return byProject[id];
@@ -192,19 +215,27 @@ function createStore() {
     const st = ensureState(ev.project_id);
     if (ev.kind === "started") {
       st.busy = true;
+      st.autoPaused = false;
+      // Only track the background-busy clock when the user isn't on this project.
+      st.busyStartedAt = ev.project_id !== activeId ? Date.now() : null;
     } else if (ev.kind === "finished") {
       st.busy = false;
       st.paused = false;
+      st.busyStartedAt = null;
+      st.autoPaused = false;
       // If the user is currently looking at another project, flag this one
       // so the sidebar shows a green dot, and play a short chime.
       if (ev.project_id !== activeId) {
         st.hasUnseenFinish = true;
         playFinishChime();
       }
+      // Refresh context-token estimate so the "getting large" warning fires.
+      refreshContextTokens(ev.project_id);
     } else if (ev.kind === "paused") {
       st.paused = true;
     } else if (ev.kind === "resumed") {
       st.paused = false;
+      st.autoPaused = false;
     } else if (ev.kind === "cancelled") {
       st.messages.push({
         type: "error",
@@ -231,9 +262,82 @@ function createStore() {
     }
   }
 
+  async function refreshContextTokens(id: string) {
+    try {
+      const a = await ensureApi();
+      if (!a.sessionStats) return;
+      const s = await a.sessionStats(id);
+      const st = ensureState(id);
+      const tokens =
+        s.last_context_tokens ||
+        s.input_tokens + s.cache_creation_tokens + s.cache_read_tokens;
+      // Reset the dismissed flag when the context shrinks (e.g. after /compact).
+      if (st.contextTokens && tokens < st.contextTokens) {
+        st.contextDismissed = false;
+      }
+      st.contextTokens = tokens;
+    } catch {
+      /* ignore — stats are best-effort */
+    }
+  }
+
+  function dismissContextWarning(id: string) {
+    ensureState(id).contextDismissed = true;
+  }
+
+  async function refreshClaudeUsage() {
+    if (claudeUsageLoading) return;
+    claudeUsageLoading = true;
+    claudeUsageError = null;
+    try {
+      const a = await ensureApi();
+      const u = await a.claudeUsage();
+      if (u.error) {
+        claudeUsageError = u.error;
+      } else {
+        claudeUsage = u;
+        claudeUsageUpdatedAt = Date.now();
+      }
+    } catch (e) {
+      claudeUsageError = String(e);
+    } finally {
+      claudeUsageLoading = false;
+    }
+  }
+
+  let usageTimer: ReturnType<typeof setInterval> | null = null;
+
+  function startUsageWatcher() {
+    if (usageTimer) return;
+    // First fetch after a short delay so we don't fight the initial UI load.
+    setTimeout(() => refreshClaudeUsage(), 10_000);
+    usageTimer = setInterval(() => refreshClaudeUsage(), USAGE_POLL_INTERVAL_MS);
+  }
+
+  let autoPauseTimer: ReturnType<typeof setInterval> | null = null;
+
+  function startAutoPauseWatcher() {
+    if (autoPauseTimer) return;
+    autoPauseTimer = setInterval(() => {
+      if (AUTO_PAUSE_AFTER_MS <= 0) return;
+      const now = Date.now();
+      for (const id of Object.keys(byProject)) {
+        const st = byProject[id];
+        if (!st.busy || st.paused || id === activeId) continue;
+        if (st.busyStartedAt == null) continue;
+        if (now - st.busyStartedAt >= AUTO_PAUSE_AFTER_MS) {
+          st.autoPaused = true;
+          pauseMessage(id);
+        }
+      }
+    }, AUTO_PAUSE_CHECK_INTERVAL_MS);
+  }
+
   async function initListener() {
     const a = await ensureApi();
     await a.subscribe(handleEvent);
+    startAutoPauseWatcher();
+    startUsageWatcher();
   }
 
   function setActive(id: string) {
@@ -241,7 +345,11 @@ function createStore() {
     const st = ensureState(id);
     // Clear the unseen-finish flag for the project the user just opened.
     st.hasUnseenFinish = false;
+    // Cancel the auto-pause clock — this project is now foreground.
+    st.busyStartedAt = null;
     loadHistory(id);
+    // Pull a fresh context estimate in case we haven't loaded it yet.
+    if (st.contextTokens == null) refreshContextTokens(id);
   }
 
   return {
@@ -268,6 +376,21 @@ function createStore() {
     initListener,
     ensureApi,
     loadMoreHistory,
+    dismissContextWarning,
+    refreshContextTokens,
+    get claudeUsage() {
+      return claudeUsage;
+    },
+    get claudeUsageLoading() {
+      return claudeUsageLoading;
+    },
+    get claudeUsageError() {
+      return claudeUsageError;
+    },
+    get claudeUsageUpdatedAt() {
+      return claudeUsageUpdatedAt;
+    },
+    refreshClaudeUsage,
   };
 }
 

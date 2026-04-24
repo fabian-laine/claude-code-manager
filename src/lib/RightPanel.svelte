@@ -64,6 +64,105 @@
   <section class="px-4 py-3.5 border-b border-[#1f1f26]">
     <div class="flex items-center justify-between mb-2.5">
       <h3 class="text-[11px] uppercase tracking-wider text-text-3 font-semibold m-0">
+        Claude plan usage
+      </h3>
+      <button
+        onclick={() => store.refreshClaudeUsage()}
+        disabled={store.claudeUsageLoading}
+        title="Refresh"
+        aria-label="Refresh"
+        class="bg-transparent border border-line-2 text-text-2 w-5.5 h-5.5 rounded cursor-pointer text-xs hover:bg-bg-2 hover:text-text-0 disabled:opacity-40"
+      >
+        {store.claudeUsageLoading ? "…" : "↻"}
+      </button>
+    </div>
+    {#if store.claudeUsageError}
+      <div class="text-danger text-xs break-words">{store.claudeUsageError}</div>
+    {:else if !store.claudeUsage && store.claudeUsageLoading}
+      <div class="text-text-3 text-xs italic">Loading…</div>
+    {:else if !store.claudeUsage}
+      <div class="text-text-3 text-xs italic">
+        Not fetched yet — auto-refreshes every 20 min.
+      </div>
+    {:else}
+      {@const u = store.claudeUsage}
+      <div class="flex flex-col gap-2.5">
+        {#if u.session}
+          <div>
+            <div class="flex items-center justify-between text-[12px]">
+              <span class="text-text-2">Session</span>
+              <span class="text-text-0 font-mono">{u.session.percent}%</span>
+            </div>
+            <div class="h-1 bg-bg-2 rounded-full overflow-hidden mt-1">
+              <div
+                class="h-full {u.session.percent >= 80
+                  ? 'bg-danger'
+                  : u.session.percent >= 50
+                    ? 'bg-warn'
+                    : 'bg-ok'}"
+                style:width="{Math.min(100, u.session.percent)}%"
+              ></div>
+            </div>
+            {#if u.session.resets}
+              <div class="text-[10px] text-text-3 mt-0.5">
+                Resets {u.session.resets}
+              </div>
+            {/if}
+          </div>
+        {/if}
+        {#if u.week_all}
+          <div>
+            <div class="flex items-center justify-between text-[12px]">
+              <span class="text-text-2">Week (all models)</span>
+              <span class="text-text-0 font-mono">{u.week_all.percent}%</span>
+            </div>
+            <div class="h-1 bg-bg-2 rounded-full overflow-hidden mt-1">
+              <div
+                class="h-full {u.week_all.percent >= 80
+                  ? 'bg-danger'
+                  : u.week_all.percent >= 50
+                    ? 'bg-warn'
+                    : 'bg-ok'}"
+                style:width="{Math.min(100, u.week_all.percent)}%"
+              ></div>
+            </div>
+            {#if u.week_all.resets}
+              <div class="text-[10px] text-text-3 mt-0.5">
+                Resets {u.week_all.resets}
+              </div>
+            {/if}
+          </div>
+        {/if}
+        {#if u.week_sonnet}
+          <div>
+            <div class="flex items-center justify-between text-[12px]">
+              <span class="text-text-2">Week (Sonnet)</span>
+              <span class="text-text-0 font-mono">{u.week_sonnet.percent}%</span>
+            </div>
+            <div class="h-1 bg-bg-2 rounded-full overflow-hidden mt-1">
+              <div
+                class="h-full {u.week_sonnet.percent >= 80
+                  ? 'bg-danger'
+                  : u.week_sonnet.percent >= 50
+                    ? 'bg-warn'
+                    : 'bg-ok'}"
+                style:width="{Math.min(100, u.week_sonnet.percent)}%"
+              ></div>
+            </div>
+          </div>
+        {/if}
+        {#if store.claudeUsageUpdatedAt}
+          <div class="text-[10px] text-text-3">
+            Updated {new Date(store.claudeUsageUpdatedAt).toLocaleTimeString()}
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </section>
+
+  <section class="px-4 py-3.5 border-b border-[#1f1f26]">
+    <div class="flex items-center justify-between mb-2.5">
+      <h3 class="text-[11px] uppercase tracking-wider text-text-3 font-semibold m-0">
         MCP servers
       </h3>
       <button

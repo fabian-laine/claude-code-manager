@@ -94,6 +94,7 @@ pub async fn start(
         )
         .route("/stt/status", get(stt_status))
         .route("/stt/download", post(stt_download))
+        .route("/usage", get(claude_usage_route))
         .route(
             "/stt/transcribe",
             post(stt_transcribe).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
@@ -339,6 +340,17 @@ struct TranscribeResp {
 #[derive(Deserialize)]
 struct TranscribeQuery {
     lang: Option<String>,
+}
+
+async fn claude_usage_route(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    auth_check(&state, &headers).await?;
+    crate::usage::fetch_claude_usage()
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn stt_transcribe(
